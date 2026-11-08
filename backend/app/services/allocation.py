@@ -119,11 +119,16 @@ def compute_drift_from_dashboard(
     db: Session,
     user_id: int,
     dashboard: DashboardOut,
+    targets: list[AllocationTarget] | None = None,
 ) -> list[DriftFlag]:
     """Drift flags for a user's already-built dashboard. Converts the
     dashboard's dollar-amount `by_asset_class` into percentages of
     `net_worth` and compares them against the user's targets. Returns
-    `[]` when net worth is zero (no allocation to drift from)."""
+    `[]` when net worth is zero (no allocation to drift from).
+
+    `targets` may be passed by a caller that has already fetched them
+    via `get_or_create_targets` (e.g. `/insights`, which also needs each
+    target's `is_user_set`), to avoid querying them twice."""
     # With no net worth there is no allocation to drift from: every
     # target would otherwise read as "fully missing". (Also avoids a
     # division by zero below.)
@@ -138,5 +143,6 @@ def compute_drift_from_dashboard(
         for asset_class, amount in dashboard.by_asset_class.items()
     }
 
-    targets = get_or_create_targets(db, user_id)
+    if targets is None:
+        targets = get_or_create_targets(db, user_id)
     return compute_drift(by_asset_class_pct, targets)

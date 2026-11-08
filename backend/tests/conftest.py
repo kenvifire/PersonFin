@@ -96,7 +96,7 @@ class FakeInsightGenerator:
         self.result = result
         self.error = error
 
-    def generate(self, dashboard, drift):
+    def generate(self, dashboard, drift, user_set_asset_classes):
         if self.result is not None:
             return self.result
         raise InsightGenerationFailed(self.error)
