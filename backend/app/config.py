@@ -1,6 +1,20 @@
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# The only Postgres driver pinned in requirements.txt is psycopg (v3).
+# SQLAlchemy maps a bare `postgresql://` / `postgres://` URL to psycopg2,
+# which isn't installed, so such URLs are rewritten to name psycopg.
+_POSTGRES_SCHEMES = ("postgresql://", "postgres://")
+_PSYCOPG_SCHEME = "postgresql+psycopg://"
+
+
+def normalize_database_url(url: str) -> str:
+    for scheme in _POSTGRES_SCHEMES:
+        if url.startswith(scheme):
+            return _PSYCOPG_SCHEME + url.removeprefix(scheme)
+    return url
 
 
 class Settings(BaseSettings):
@@ -14,6 +28,11 @@ class Settings(BaseSettings):
     google_client_id: str
     google_client_secret: str
     fx_api_key: str | None = None
+
+    @field_validator("database_url")
+    @classmethod
+    def _use_psycopg_driver(cls, url: str) -> str:
+        return normalize_database_url(url)
 
 
 @lru_cache
