@@ -20,6 +20,7 @@ that's left as a UI-level nudge (Plan 4), never enforced here.
 from sqlalchemy.orm import Session
 
 from app.models import AllocationTarget
+from app.schemas.dashboard import DashboardOut
 from app.schemas.target import DriftFlag
 
 # Default allocation suggestions seeded for a user on first access.
@@ -112,3 +113,30 @@ def compute_drift(
                 )
             )
     return flags
+
+
+def compute_drift_from_dashboard(
+    db: Session,
+    user_id: int,
+    dashboard: DashboardOut,
+) -> list[DriftFlag]:
+    """Drift flags for a user's already-built dashboard. Converts the
+    dashboard's dollar-amount `by_asset_class` into percentages of
+    `net_worth` and compares them against the user's targets. Returns
+    `[]` when net worth is zero (no allocation to drift from)."""
+    # With no net worth there is no allocation to drift from: every
+    # target would otherwise read as "fully missing". (Also avoids a
+    # division by zero below.)
+    if dashboard.net_worth == 0:
+        return []
+
+    # Dashboard's `by_asset_class` holds dollar amounts in the display
+    # currency, not percentages — convert to percentages of net worth
+    # before comparing against targets.
+    by_asset_class_pct = {
+        asset_class: amount / dashboard.net_worth * 100
+        for asset_class, amount in dashboard.by_asset_class.items()
+    }
+
+    targets = get_or_create_targets(db, user_id)
+    return compute_drift(by_asset_class_pct, targets)

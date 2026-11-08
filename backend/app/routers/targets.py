@@ -14,7 +14,7 @@ from app.models import AllocationTarget, User
 from app.schemas.target import DriftFlag, TargetOut, TargetUpdateIn
 from app.services import fx
 from app.services.allocation import (
-    compute_drift,
+    compute_drift_from_dashboard,
     get_or_create_targets,
     normalize_asset_class,
 )
@@ -80,20 +80,4 @@ def get_drift(
         )
 
     dashboard = build_dashboard(db, current_user.id, currency, fx_provider)
-
-    # With no net worth there is no allocation to drift from: every
-    # target would otherwise read as "fully missing". (Also avoids a
-    # division by zero below.)
-    if dashboard.net_worth == 0:
-        return []
-
-    # Dashboard's `by_asset_class` holds dollar amounts in the display
-    # currency, not percentages — convert to percentages of net worth
-    # before comparing against targets.
-    by_asset_class_pct = {
-        asset_class: amount / dashboard.net_worth * 100
-        for asset_class, amount in dashboard.by_asset_class.items()
-    }
-
-    targets = get_or_create_targets(db, current_user.id)
-    return compute_drift(by_asset_class_pct, targets)
+    return compute_drift_from_dashboard(db, current_user.id, dashboard)
