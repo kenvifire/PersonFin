@@ -154,6 +154,30 @@ def test_extract_on_terminal_upload_returns_409(client, auth_header_for, db_sess
     assert response.status_code == 409
 
 
+def test_extract_with_missing_image_path_sets_status_failed_not_500(client, auth_header_for, db_session):
+    """An upload can be left `pending` with `image_path = None` if the
+    original file write failed (see `Upload`'s docstring). `pending`
+    isn't terminal, so the 409 guard doesn't block calling extract on
+    it — the missing-file case must be handled like any other
+    extraction failure, not crash with a 500."""
+    headers = auth_header_for("a@example.com")
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+
+    upload = db_session.get(Upload, upload_id)
+    upload.image_path = None
+    upload.status = "pending"
+    db_session.commit()
+
+    response = client.post(f"/uploads/{upload_id}/extract", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["extraction_error"]
+
+
 def test_extract_requires_authentication(client, auth_header_for):
     headers = auth_header_for("a@example.com")
     upload_id = client.post(

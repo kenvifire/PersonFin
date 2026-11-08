@@ -75,16 +75,32 @@ def extract_upload(
     if upload.status in TERMINAL_STATUSES:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Upload is already finalized")
 
-    image_bytes = (Path(base_dir) / upload.image_path).read_bytes()
-    try:
-        result = extractor.extract(image_bytes, upload.mime_type)
-    except ExtractionFailed as exc:
+    # `image_path` can be `None` (the original upload's file write failed,
+    # per `Upload`'s docstring) and even a set path can point at a file
+    # since removed from disk — `pending` isn't a terminal status, so
+    # nothing upstream of here rules either case out. Treat "no readable
+    # image" the same way as an Azure extraction failure: record it on
+    # the upload and return 200, never a bare 500 from a missing file.
+    image_bytes: bytes | None = None
+    if upload.image_path is not None:
+        try:
+            image_bytes = (Path(base_dir) / upload.image_path).read_bytes()
+        except OSError:
+            image_bytes = None
+
+    if image_bytes is None:
         upload.status = STATUS_FAILED
-        upload.extraction_error = str(exc)
+        upload.extraction_error = "Stored image could not be read (missing or never saved)"
     else:
-        upload.status = STATUS_EXTRACTED
-        upload.extracted_payload = result.model_dump(mode="json")
-        upload.extraction_error = None
+        try:
+            result = extractor.extract(image_bytes, upload.mime_type)
+        except ExtractionFailed as exc:
+            upload.status = STATUS_FAILED
+            upload.extraction_error = str(exc)
+        else:
+            upload.status = STATUS_EXTRACTED
+            upload.extracted_payload = result.model_dump(mode="json")
+            upload.extraction_error = None
 
     db.commit()
     db.refresh(upload)
