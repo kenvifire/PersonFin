@@ -9,7 +9,6 @@ from dataclasses import dataclass
 
 import httpx
 from authlib.jose import JsonWebKey, jwt
-from authlib.jose.errors import JoseError
 
 from app.config import get_settings
 
@@ -40,6 +39,10 @@ def verify_google_id_token(token: str) -> GoogleProfile:
     try:
         response = httpx.get(GOOGLE_JWKS_URL, timeout=10)
         response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise InvalidGoogleToken("could not reach Google to verify ID token") from exc
+
+    try:
         jwk_set = JsonWebKey.import_key_set(response.json())
 
         claims_options = {
@@ -48,10 +51,17 @@ def verify_google_id_token(token: str) -> GoogleProfile:
         }
         claims = jwt.decode(token, jwk_set, claims_options=claims_options)
         claims.validate()
-    except JoseError as exc:
+    except Exception as exc:
+        # `token` is attacker-controlled input fed through several
+        # layers of third-party parsing (JSON, base64, JWK coercion,
+        # signature verification). Besides Authlib's own `JoseError`,
+        # a malformed or adversarial token can trip a bare `KeyError`/
+        # `ValueError`/`TypeError` deep inside that machinery (e.g. an
+        # RS256->HS256 algorithm-confusion attempt that makes Authlib
+        # try to use an RSA key as an HMAC secret). Every such failure
+        # must fail closed as an invalid token, never as an unhandled
+        # 500.
         raise InvalidGoogleToken("invalid Google ID token") from exc
-    except httpx.HTTPError as exc:
-        raise InvalidGoogleToken("could not reach Google to verify ID token") from exc
 
     sub = claims.get("sub")
     email = claims.get("email")
