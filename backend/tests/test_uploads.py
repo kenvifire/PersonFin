@@ -578,3 +578,241 @@ def test_discard_during_in_flight_confirm_returns_409_and_keeps_file(
     # The file must survive: a discard that loses the race must never
     # have called delete_upload_image.
     assert len(list(Path(upload_base_dir).rglob("*.png"))) == 1
+
+
+class _RacingVisionExtractor:
+    """A `VisionExtractor` that, while "Azure is running", simulates a
+    concurrent request moving the upload to `racing_status` — committed
+    through the same `db_session` the handler uses — and then returns a
+    real extraction result. By the time `extract_upload` tries to write
+    that result, the row's status has already changed underneath it,
+    reproducing the extract-vs-confirm / extract-vs-discard interleavings
+    deterministically, without real threads."""
+
+    def __init__(self, db_session, upload_id: int, racing_status: str, result: ExtractionResult):
+        self.db_session = db_session
+        self.upload_id = upload_id
+        self.racing_status = racing_status
+        self.result = result
+
+    def extract(self, image_bytes: bytes, mime_type: str) -> ExtractionResult:
+        from sqlalchemy import update
+
+        self.db_session.execute(
+            update(Upload).where(Upload.id == self.upload_id).values(status=self.racing_status)
+        )
+        self.db_session.commit()
+        return self.result
+
+
+_RACE_RESULT = ExtractionResult(
+    institution="RBC",
+    account_label="RRSP",
+    account_type_guess="rrsp",
+    taken_at_guess=date(2026, 11, 1),
+    holdings=[
+        DraftHolding(label="VFV", asset_class_guess="equity", quantity=10, value=1000.0, currency_guess="CAD", country_guess="CA")
+    ],
+)
+
+_CONFIRM_PAYLOAD_HOLDINGS = [
+    {"label": "VFV", "asset_class": "equity", "quantity": 10, "value": 1000.0, "currency": "CAD", "country": "CA"}
+]
+
+
+def test_extract_on_confirming_upload_returns_409(client, auth_header_for, db_session):
+    """`STATUS_CONFIRMING` isn't terminal, but an upload a confirm has
+    already claimed must not be extracted against: extract's entry check
+    uses the `CLAIMABLE_STATUSES` allow-list, not "not terminal"."""
+    headers = auth_header_for("a@example.com")
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+
+    upload = db_session.get(Upload, upload_id)
+    upload.status = "confirming"
+    db_session.commit()
+
+    response = client.post(f"/uploads/{upload_id}/extract", headers=headers)
+    assert response.status_code == 409
+    db_session.refresh(upload)
+    assert upload.status == "confirming"
+    assert upload.extracted_payload is None
+
+
+def test_extract_vs_confirm_race_does_not_create_duplicate_snapshot(client, auth_header_for, db_session):
+    """Regression for the extract-vs-confirm interleaving: extract passes
+    its entry check, then (while Azure is "running") a confirm claims the
+    upload (-> `STATUS_CONFIRMING`). Extract's write of its result must
+    lose (409) rather than overwrite the status back to `extracted` —
+    which would let a second confirm re-claim the upload and create a
+    second permanent Snapshot."""
+    headers = auth_header_for("a@example.com")
+    account_id = client.post(
+        "/accounts", json={"name": "RRSP", "institution": "RBC", "account_type": "rrsp"}, headers=headers
+    ).json()["id"]
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+
+    app.dependency_overrides[vision.get_vision_extractor] = lambda: _RacingVisionExtractor(
+        db_session, upload_id, "confirming", _RACE_RESULT
+    )
+    response = client.post(f"/uploads/{upload_id}/extract", headers=headers)
+    del app.dependency_overrides[vision.get_vision_extractor]
+
+    assert response.status_code == 409
+    upload = db_session.get(Upload, upload_id)
+    db_session.refresh(upload)
+    assert upload.status == "confirming"
+    assert upload.extracted_payload is None
+    assert upload.suggested_account_id is None
+
+    # The simulated in-flight confirm owns the claim; a second confirm
+    # arriving now must be rejected, not allowed to re-claim.
+    payload = {"account_id": account_id, "new_account": None, "taken_at": "2026-11-08", "holdings": _CONFIRM_PAYLOAD_HOLDINGS}
+    assert client.post(f"/uploads/{upload_id}/confirm", json=payload, headers=headers).status_code == 409
+
+    # Release the simulated claim (as the in-flight confirm's revert
+    # would on failure) and confirm legitimately: exactly one Snapshot.
+    upload.status = "pending"
+    db_session.commit()
+    response = client.post(f"/uploads/{upload_id}/confirm", json=payload, headers=headers)
+    assert response.status_code == 201
+    assert client.post(f"/uploads/{upload_id}/confirm", json=payload, headers=headers).status_code == 409
+    assert db_session.query(Snapshot).filter(Snapshot.account_id == account_id).count() == 1
+    db_session.refresh(upload)
+    assert upload.status == "confirmed"
+
+
+def test_extract_vs_discard_race_does_not_resurrect_discarded_upload(
+    client, auth_header_for, db_session, upload_base_dir
+):
+    """Regression for the extract-vs-discard interleaving: extract passes
+    its entry check, then (while Azure is "running") a discard claims the
+    upload, deletes the image, and commits `STATUS_DISCARDED`. Extract's
+    write must lose (409) rather than resurrect the upload to
+    `extracted` — which would let a later confirm succeed on an upload
+    whose image is already gone."""
+    headers = auth_header_for("a@example.com")
+    account_id = client.post(
+        "/accounts", json={"name": "RRSP", "institution": "RBC", "account_type": "rrsp"}, headers=headers
+    ).json()["id"]
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+    upload = db_session.get(Upload, upload_id)
+    image_file = Path(upload_base_dir) / upload.image_path
+
+    class _DiscardingExtractor(_RacingVisionExtractor):
+        def extract(self, image_bytes: bytes, mime_type: str) -> ExtractionResult:
+            image_file.unlink()  # discard deletes the image, then commits STATUS_DISCARDED
+            return super().extract(image_bytes, mime_type)
+
+    app.dependency_overrides[vision.get_vision_extractor] = lambda: _DiscardingExtractor(
+        db_session, upload_id, "discarded", _RACE_RESULT
+    )
+    response = client.post(f"/uploads/{upload_id}/extract", headers=headers)
+    del app.dependency_overrides[vision.get_vision_extractor]
+
+    assert response.status_code == 409
+    db_session.refresh(upload)
+    assert upload.status == "discarded"
+    assert upload.extracted_payload is None
+
+    # And the follow-on harm from the original bug: confirm must not be
+    # able to commit an upload whose image was deleted.
+    payload = {"account_id": account_id, "new_account": None, "taken_at": "2026-11-08", "holdings": _CONFIRM_PAYLOAD_HOLDINGS}
+    assert client.post(f"/uploads/{upload_id}/confirm", json=payload, headers=headers).status_code == 409
+    db_session.refresh(upload)
+    assert upload.status == "discarded"
+    assert db_session.query(Snapshot).count() == 0
+
+
+def test_extract_failure_result_also_loses_race_to_concurrent_discard(client, auth_header_for, db_session):
+    """The failure branch (`STATUS_FAILED` + `extraction_error`) goes
+    through the same conditional write as the success branch: a failed
+    extraction finishing after a discard must not overwrite `discarded`."""
+    from app.services.vision import ExtractionFailed
+
+    headers = auth_header_for("a@example.com")
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+
+    class _DiscardThenFail(_RacingVisionExtractor):
+        def extract(self, image_bytes: bytes, mime_type: str) -> ExtractionResult:
+            super().extract(image_bytes, mime_type)
+            raise ExtractionFailed("Azure timed out")
+
+    app.dependency_overrides[vision.get_vision_extractor] = lambda: _DiscardThenFail(
+        db_session, upload_id, "discarded", _RACE_RESULT
+    )
+    response = client.post(f"/uploads/{upload_id}/extract", headers=headers)
+    del app.dependency_overrides[vision.get_vision_extractor]
+
+    assert response.status_code == 409
+    upload = db_session.get(Upload, upload_id)
+    db_session.refresh(upload)
+    assert upload.status == "discarded"
+    assert upload.extraction_error is None
+
+
+def test_confirm_revert_on_failure_only_undoes_its_own_claim(client, auth_header_for, db_session, monkeypatch):
+    """Confirm's revert-on-failure must only ever undo its own
+    `STATUS_CONFIRMING` claim. If the row has somehow already moved on
+    (simulated here by `create_snapshot` itself moving it to
+    `discarded` before failing), the revert must leave it alone."""
+    from sqlalchemy import update
+
+    import app.routers.uploads as uploads_router
+
+    headers = auth_header_for("a@example.com")
+    account_id = client.post(
+        "/accounts", json={"name": "RRSP", "institution": "RBC", "account_type": "rrsp"}, headers=headers
+    ).json()["id"]
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+
+    def _create_snapshot_that_races_then_fails(db, account, snapshot_in, fx_provider):
+        db.execute(update(Upload).where(Upload.id == upload_id).values(status="discarded"))
+        db.commit()
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(uploads_router, "create_snapshot", _create_snapshot_that_races_then_fails)
+
+    payload = {"account_id": account_id, "new_account": None, "taken_at": "2026-11-08", "holdings": _CONFIRM_PAYLOAD_HOLDINGS}
+    try:
+        client.post(f"/uploads/{upload_id}/confirm", json=payload, headers=headers)
+    except RuntimeError:
+        pass  # TestClient re-raises unhandled server exceptions; the revert has already run.
+
+    upload = db_session.get(Upload, upload_id)
+    db_session.refresh(upload)
+    assert upload.status == "discarded"
+
+
+def test_upload_disk_write_failure_returns_clean_503_and_marks_failed(client, auth_header_for, db_session, monkeypatch):
+    """If saving the file fails after the `Upload` row already exists
+    (disk full, permissions), the client gets a deliberate 503 with a
+    JSON `detail`, and the row is marked `failed` with a readable
+    `extraction_error` — never an unhandled 500."""
+    import app.routers.uploads as uploads_router
+
+    def _raise_oserror(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(uploads_router, "save_upload_image", _raise_oserror)
+    headers = auth_header_for("a@example.com")
+    response = client.post("/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers)
+
+    assert response.status_code == 503
+    assert response.headers["content-type"] == "application/json"
+    assert response.json()["detail"] == "Could not store the uploaded image; please try again"
+
+    uploads = db_session.query(Upload).all()
+    assert len(uploads) == 1
+    assert uploads[0].status == "failed"
+    assert uploads[0].image_path is None
+    assert uploads[0].extraction_error == "Uploaded image could not be saved to storage"

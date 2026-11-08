@@ -2,15 +2,30 @@
 `pending` `Upload` row, and stores the file on local disk.
 
 The row is created first (to get an id to name the file after), then
-the file is saved; if the write fails, the row is simply left
-`pending` with no `image_path` — there's no retry endpoint yet, so a
-user who hits that would just re-upload.
+the file is saved; if the write fails (`OSError`), the row is marked
+`failed` with no `image_path` and an explanatory `extraction_error`,
+and the client gets a 503 — there's no retry endpoint yet, so a user
+who hits that would just re-upload.
 
 `POST /uploads/{id}/extract`: reads the stored image back off disk and
 runs vision extraction against it. Extraction failure is recorded as
 upload status (`failed`, with `extraction_error` set), not an HTTP
 error — the endpoint itself always succeeds at recording the outcome,
-whichever way it goes.
+whichever way it goes, unless a confirm or discard claimed the upload
+while extraction was running (409, below).
+
+Extract races confirm and discard too. The vision call can take
+seconds, and confirm/discard can claim the upload during it. If extract
+then wrote its result with a plain ORM assignment over the status it
+read *before* the call, it would overwrite `STATUS_CONFIRMING`/
+`STATUS_CONFIRMED`/`STATUS_DISCARDED` back to `extracted`/`failed` —
+letting a second confirm create a duplicate Snapshot, or a confirm
+succeed on an upload whose image discard already deleted. So extract
+holds no claim across the slow call (no `extracting` status), but
+writes its outcome via `write_extraction_outcome`: a single conditional
+`UPDATE ... WHERE status IN CLAIMABLE_STATUSES`. If it matches no row,
+the result is dropped and the caller gets 409; the only cost of losing
+that race is one wasted vision call.
 
 `POST /uploads/{id}/confirm`: the one place a user's (possibly-edited)
 holdings become a permanent snapshot. Deliberately thin — like
@@ -49,6 +64,7 @@ loses (rowcount 0) instead of deleting the file out from under it.
 """
 
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy import update
@@ -64,7 +80,6 @@ from app.models.upload import (
     STATUS_EXTRACTED,
     STATUS_FAILED,
     STATUS_PENDING,
-    TERMINAL_STATUSES,
 )
 from app.routers._ownership import get_owned_account_or_404, get_owned_upload_or_404
 from app.schemas.snapshot import SnapshotIn, SnapshotOut
@@ -84,6 +99,11 @@ router = APIRouter(prefix="/uploads", tags=["uploads"])
 # already `STATUS_CONFIRMING` (which isn't terminal), defeating the
 # whole point of the claim.
 CLAIMABLE_STATUSES = (STATUS_PENDING, STATUS_EXTRACTED, STATUS_FAILED)
+
+# `POST /uploads` disk-write failure: what the client is told, and what
+# is recorded on the (already-created) row's `extraction_error`.
+UPLOAD_SAVE_FAILED_DETAIL = "Could not store the uploaded image; please try again"
+UPLOAD_SAVE_FAILED_ERROR = "Uploaded image could not be saved to storage"
 
 
 def claim_upload_for_confirmation(db: Session, upload_id: int) -> int:
@@ -133,6 +153,31 @@ def claim_upload_for_discard(db: Session, upload_id: int) -> int:
     return result.rowcount
 
 
+def write_extraction_outcome(db: Session, upload_id: int, values: dict[str, Any]) -> int:
+    """Atomically write an extraction outcome (`status` plus the
+    payload/error/suggestion columns in `values`) to `upload_id`, but
+    only if the upload is still in a claimable status, in a single
+    `UPDATE`. Returns how many rows it matched (0 or 1).
+
+    Same shape as `claim_upload_for_confirmation`/`claim_upload_for_discard`,
+    applied at the *end* of extraction rather than the start: the status
+    `extract_upload` read before calling the vision extractor may be
+    stale by the time that (slow) call returns. A `0` means a confirm or
+    discard claimed the upload in the meantime; the caller must drop the
+    result rather than overwrite `STATUS_CONFIRMING`/`STATUS_CONFIRMED`/
+    `STATUS_DISCARDED` back to a claimable status, which would let a
+    second confirm create a duplicate Snapshot, or a confirm succeed on
+    an upload whose image discard already deleted.
+    """
+    result = db.execute(
+        update(Upload)
+        .where(Upload.id == upload_id, Upload.status.in_(CLAIMABLE_STATUSES))
+        .values(**values)
+    )
+    db.commit()
+    return result.rowcount
+
+
 @router.post("", response_model=UploadOut, status_code=status.HTTP_201_CREATED)
 async def create_upload(
     file: UploadFile,
@@ -148,13 +193,24 @@ async def create_upload(
     db.commit()
     db.refresh(upload)
 
-    image_path = save_upload_image(
-        base_dir,
-        user_id=current_user.id,
-        upload_id=upload.id,
-        mime_type=file.content_type,
-        content=content,
-    )
+    try:
+        image_path = save_upload_image(
+            base_dir,
+            user_id=current_user.id,
+            upload_id=upload.id,
+            mime_type=file.content_type,
+            content=content,
+        )
+    except OSError:
+        # Disk full, permissions, etc. The row already exists, so record
+        # why it has no image (rather than leaving an unexplained
+        # `pending` row), and give the client a deliberate 503 instead
+        # of an unhandled 500. The OS error text is not echoed: it can
+        # contain server filesystem paths.
+        upload.status = STATUS_FAILED
+        upload.extraction_error = UPLOAD_SAVE_FAILED_ERROR
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=UPLOAD_SAVE_FAILED_DETAIL)
     upload.image_path = image_path
     db.commit()
     db.refresh(upload)
@@ -170,8 +226,15 @@ def extract_upload(
     extractor: VisionExtractor = Depends(vision.get_vision_extractor),
 ) -> Upload:
     upload = get_owned_upload_or_404(upload_id, current_user, db)
-    if upload.status in TERMINAL_STATUSES:
+    # Same allow-list as confirm/discard, not "not terminal": an upload a
+    # confirm has already claimed (`STATUS_CONFIRMING`) must not be
+    # extracted against either. This entry check is a fast-fail only —
+    # it isn't atomic and doesn't need to be; the atomic guard is the
+    # conditional write in `write_extraction_outcome` below.
+    if upload.status not in CLAIMABLE_STATUSES:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Upload is already finalized")
+    image_path = upload.image_path
+    mime_type = upload.mime_type
 
     # `image_path` can be `None` (the original upload's file write failed,
     # per `Upload`'s docstring) and even a set path can point at a file
@@ -180,29 +243,42 @@ def extract_upload(
     # image" the same way as an Azure extraction failure: record it on
     # the upload and return 200, never a bare 500 from a missing file.
     image_bytes: bytes | None = None
-    if upload.image_path is not None:
+    if image_path is not None:
         try:
-            image_bytes = (Path(base_dir) / upload.image_path).read_bytes()
+            image_bytes = (Path(base_dir) / image_path).read_bytes()
         except OSError:
             image_bytes = None
 
+    outcome: dict[str, Any]
     if image_bytes is None:
-        upload.status = STATUS_FAILED
-        upload.extraction_error = "Stored image could not be read (missing or never saved)"
+        outcome = {
+            "status": STATUS_FAILED,
+            "extraction_error": "Stored image could not be read (missing or never saved)",
+        }
     else:
+        # Potentially slow (an Azure HTTP call). Deliberately no claim or
+        # lock is held across it — see this module's docstring.
         try:
-            result = extractor.extract(image_bytes, upload.mime_type)
+            result = extractor.extract(image_bytes, mime_type)
         except ExtractionFailed as exc:
-            upload.status = STATUS_FAILED
-            upload.extraction_error = str(exc)
+            outcome = {"status": STATUS_FAILED, "extraction_error": str(exc)}
         else:
-            upload.status = STATUS_EXTRACTED
-            upload.extracted_payload = result.model_dump(mode="json")
-            upload.extraction_error = None
             matched = suggest_account(db, current_user.id, result.institution, result.account_label)
-            upload.suggested_account_id = matched.id if matched else None
+            outcome = {
+                "status": STATUS_EXTRACTED,
+                "extracted_payload": result.model_dump(mode="json"),
+                "extraction_error": None,
+                "suggested_account_id": matched.id if matched else None,
+            }
 
-    db.commit()
+    if write_extraction_outcome(db, upload_id, outcome) == 0:
+        # A confirm or discard claimed this upload while extraction was
+        # running. It owns the upload's fate now; this result is dropped.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Upload was confirmed or discarded while extraction was in progress",
+        )
+
     db.refresh(upload)
     return upload
 
@@ -275,8 +351,15 @@ def confirm_upload(
         # `STATUS_CONFIRMING` forever and a retry remains possible.
         # Re-raising lets existing global handlers (e.g.
         # `FXRateUnavailable` -> 503) still apply.
+        # The `STATUS_CONFIRMING` guard means this can only ever undo
+        # this request's own claim, never clobber a status some other
+        # writer has since set.
         db.rollback()
-        db.execute(update(Upload).where(Upload.id == upload_id).values(status=original_status))
+        db.execute(
+            update(Upload)
+            .where(Upload.id == upload_id, Upload.status == STATUS_CONFIRMING)
+            .values(status=original_status)
+        )
         db.commit()
         raise
 

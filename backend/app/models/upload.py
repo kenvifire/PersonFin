@@ -43,7 +43,7 @@ class Upload(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     # Relative to `Settings.upload_dir`. Null until the file is actually
     # written to disk — the row is created first (to get an id for the
-    # filename) and a write failure leaves it `pending` with no path set.
+    # filename) and a write failure leaves it `failed` with no path set.
     image_path: Mapped[str | None] = mapped_column(String, nullable=True)
     mime_type: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default=STATUS_PENDING)
