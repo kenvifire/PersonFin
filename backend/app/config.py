@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # Local disk only — not a secret, just a path. Screenshots never leave
     # the server except for the one vision-extraction API call.
     upload_dir: str = "./data/uploads"
+    azure_openai_endpoint: str
+    azure_openai_api_key: str
+    azure_openai_deployment: str
 
     @field_validator("database_url")
     @classmethod

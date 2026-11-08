@@ -1,10 +1,18 @@
 """`POST /uploads`: accepts a multipart screenshot upload, creates a
 `pending` `Upload` row, and stores the file under the test-isolated
 `upload_base_dir`.
+
+`POST /uploads/{id}/extract`: runs vision extraction against the stored
+image and records the outcome (success or failure) as upload status.
 """
 
+from datetime import date
+
+from app.main import app
 from app.models import Upload
-from app.services import image_storage
+from app.schemas.extraction import DraftHolding, ExtractionResult
+from app.services import image_storage, vision
+from conftest import FakeVisionExtractor
 
 
 def test_upload_rejects_unsupported_mime_type(client, auth_header_for):
@@ -69,3 +77,87 @@ def test_upload_scopes_file_to_authenticated_user(client, auth_header_for, db_se
 
     owner = db_session.query(User).filter(User.email == "owner@example.com").one()
     assert upload.user_id == owner.id
+
+
+def test_extract_populates_payload_and_sets_status_extracted(client, auth_header_for):
+    headers = auth_header_for("a@example.com")
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+
+    fake_result = ExtractionResult(
+        institution="RBC",
+        account_label="RRSP",
+        account_type_guess="rrsp",
+        taken_at_guess=date(2026, 11, 1),
+        holdings=[
+            DraftHolding(
+                label="VFV",
+                asset_class_guess="equity",
+                quantity=10,
+                value=1000.0,
+                currency_guess="CAD",
+                country_guess="CA",
+            )
+        ],
+    )
+    app.dependency_overrides[vision.get_vision_extractor] = lambda: FakeVisionExtractor(result=fake_result)
+    response = client.post(f"/uploads/{upload_id}/extract", headers=headers)
+    del app.dependency_overrides[vision.get_vision_extractor]
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "extracted"
+    assert body["extracted_payload"]["institution"] == "RBC"
+    assert body["extracted_payload"]["holdings"][0]["label"] == "VFV"
+
+
+def test_extract_failure_sets_status_failed_not_500(client, auth_header_for):
+    headers = auth_header_for("a@example.com")
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+
+    app.dependency_overrides[vision.get_vision_extractor] = lambda: FakeVisionExtractor(
+        error="Azure returned a non-JSON body"
+    )
+    response = client.post(f"/uploads/{upload_id}/extract", headers=headers)
+    del app.dependency_overrides[vision.get_vision_extractor]
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["extraction_error"]
+
+
+def test_extract_for_other_users_upload_returns_404(client, auth_header_for):
+    headers_a = auth_header_for("a@example.com")
+    headers_b = auth_header_for("b@example.com")
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers_a
+    ).json()["id"]
+    response = client.post(f"/uploads/{upload_id}/extract", headers=headers_b)
+    assert response.status_code == 404
+
+
+def test_extract_on_terminal_upload_returns_409(client, auth_header_for, db_session):
+    headers = auth_header_for("a@example.com")
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+
+    upload = db_session.get(Upload, upload_id)
+    upload.status = "confirmed"
+    db_session.commit()
+
+    response = client.post(f"/uploads/{upload_id}/extract", headers=headers)
+    assert response.status_code == 409
+
+
+def test_extract_requires_authentication(client, auth_header_for):
+    headers = auth_header_for("a@example.com")
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+    response = client.post(f"/uploads/{upload_id}/extract")
+    assert response.status_code == 401

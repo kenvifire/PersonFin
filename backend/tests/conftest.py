@@ -13,6 +13,9 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
 os.environ.setdefault("GOOGLE_CLIENT_ID", "test-google-client-id")
 os.environ.setdefault("GOOGLE_CLIENT_SECRET", "test-google-client-secret")
+os.environ.setdefault("AZURE_OPENAI_ENDPOINT", "https://test.example/openai")
+os.environ.setdefault("AZURE_OPENAI_API_KEY", "test-azure-openai-api-key")
+os.environ.setdefault("AZURE_OPENAI_DEPLOYMENT", "test-deployment")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -23,8 +26,10 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 import app.models  # noqa: E402,F401 — registers all model tables on Base.metadata
 from app.db import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
+from app.schemas.extraction import ExtractionResult  # noqa: E402
 from app.services import image_storage  # noqa: E402
 from app.services.fx import FXRateUnavailable, get_fx_provider  # noqa: E402
+from app.services.vision import ExtractionFailed, get_vision_extractor  # noqa: E402
 
 
 class FakeFXRateProvider:
@@ -58,6 +63,24 @@ class FailingFXRateProvider:
 
     def get_rate(self, base: str, quote: str) -> float:
         raise FXRateUnavailable(base, quote)
+
+
+class FakeVisionExtractor:
+    """A `VisionExtractor` that returns a fixed result or raises
+    `ExtractionFailed`, so tests never hit the real Azure OpenAI API.
+    Tests pick one or the other per call via
+    `app.dependency_overrides[vision.get_vision_extractor] = lambda: FakeVisionExtractor(...)`,
+    the same per-test override style used for `fx.get_fx_provider`.
+    """
+
+    def __init__(self, result: ExtractionResult | None = None, error: str | None = None):
+        self.result = result
+        self.error = error
+
+    def extract(self, image_bytes: bytes, mime_type: str) -> ExtractionResult:
+        if self.result is not None:
+            return self.result
+        raise ExtractionFailed(self.error)
 
 
 # A single in-memory SQLite engine, shared via StaticPool so every connection
@@ -107,6 +130,7 @@ def client(db_session, upload_base_dir):
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_fx_provider] = lambda: FakeFXRateProvider()
+    app.dependency_overrides[get_vision_extractor] = lambda: FakeVisionExtractor(result=ExtractionResult())
     try:
         with TestClient(app) as test_client:
             yield test_client
