@@ -22,9 +22,11 @@ from app.auth.dependencies import get_current_user
 from app.db import get_db
 from app.models import Upload, User
 from app.models.upload import STATUS_EXTRACTED, STATUS_FAILED, STATUS_PENDING, TERMINAL_STATUSES
-from app.schemas.upload import UploadExtractOut, UploadOut
+from app.routers._ownership import get_owned_upload_or_404
+from app.schemas.upload import UploadDetailOut, UploadExtractOut, UploadOut, UploadSummaryOut
 from app.services import vision
 from app.services.image_storage import get_upload_base_dir, save_upload_image, validate_upload
+from app.services.matching import suggest_account
 from app.services.vision import ExtractionFailed, VisionExtractor
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
@@ -66,12 +68,7 @@ def extract_upload(
     base_dir: str = Depends(get_upload_base_dir),
     extractor: VisionExtractor = Depends(vision.get_vision_extractor),
 ) -> Upload:
-    # Task 3 adds a shared `get_owned_upload_or_404` helper; until then,
-    # the ownership-scoped lookup is inlined here (same pattern as
-    # `routers._ownership.get_owned_account_or_404`).
-    upload = db.query(Upload).filter(Upload.id == upload_id, Upload.user_id == current_user.id).first()
-    if upload is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found")
+    upload = get_owned_upload_or_404(upload_id, current_user, db)
     if upload.status in TERMINAL_STATUSES:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Upload is already finalized")
 
@@ -101,7 +98,31 @@ def extract_upload(
             upload.status = STATUS_EXTRACTED
             upload.extracted_payload = result.model_dump(mode="json")
             upload.extraction_error = None
+            matched = suggest_account(db, current_user.id, result.institution, result.account_label)
+            upload.suggested_account_id = matched.id if matched else None
 
     db.commit()
     db.refresh(upload)
     return upload
+
+
+@router.get("", response_model=list[UploadSummaryOut])
+def list_uploads(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[Upload]:
+    return (
+        db.query(Upload)
+        .filter(Upload.user_id == current_user.id)
+        .order_by(Upload.created_at.desc())
+        .all()
+    )
+
+
+@router.get("/{upload_id}", response_model=UploadDetailOut)
+def get_upload(
+    upload_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Upload:
+    return get_owned_upload_or_404(upload_id, current_user, db)

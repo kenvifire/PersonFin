@@ -185,3 +185,42 @@ def test_extract_requires_authentication(client, auth_header_for):
     ).json()["id"]
     response = client.post(f"/uploads/{upload_id}/extract")
     assert response.status_code == 401
+
+
+def test_extract_sets_suggested_account_when_similar_account_exists(client, auth_header_for):
+    headers = auth_header_for("a@example.com")
+    account_id = client.post(
+        "/accounts", json={"name": "RRSP", "institution": "Royal Bank of Canada", "account_type": "rrsp"}, headers=headers
+    ).json()["id"]
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+
+    fake_result = ExtractionResult(institution="RBC Royal Bank", account_label="RRSP", account_type_guess="rrsp", taken_at_guess=None, holdings=[])
+    app.dependency_overrides[vision.get_vision_extractor] = lambda: FakeVisionExtractor(result=fake_result)
+    client.post(f"/uploads/{upload_id}/extract", headers=headers)
+    del app.dependency_overrides[vision.get_vision_extractor]
+
+    detail = client.get(f"/uploads/{upload_id}", headers=headers).json()
+    assert detail["suggested_account_id"] == account_id
+
+
+def test_list_uploads_scoped_to_user(client, auth_header_for):
+    headers_a = auth_header_for("a@example.com")
+    headers_b = auth_header_for("b@example.com")
+    client.post("/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers_a)
+    client.post("/uploads", files={"file": ("y.png", b"fake-png-bytes", "image/png")}, headers=headers_b)
+
+    response = client.get("/uploads", headers=headers_a)
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+
+
+def test_get_upload_detail_for_other_user_returns_404(client, auth_header_for):
+    headers_a = auth_header_for("a@example.com")
+    headers_b = auth_header_for("b@example.com")
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers_a
+    ).json()["id"]
+    response = client.get(f"/uploads/{upload_id}", headers=headers_b)
+    assert response.status_code == 404

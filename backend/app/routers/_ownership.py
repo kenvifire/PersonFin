@@ -8,7 +8,7 @@ returns 404.
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models import Account, Todo, User
+from app.models import Account, Todo, Upload, User
 
 
 def get_owned_account_or_404(account_id: int, current_user: User, db: Session) -> Account:
@@ -31,3 +31,14 @@ def get_owned_todo_or_404(todo_id: int, current_user: User, db: Session) -> Todo
     if todo is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Todo not found")
     return todo
+
+
+def get_owned_upload_or_404(upload_id: int, current_user: User, db: Session) -> Upload:
+    upload = (
+        db.query(Upload)
+        .filter(Upload.id == upload_id, Upload.user_id == current_user.id)
+        .first()
+    )
+    if upload is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found")
+    return upload
