@@ -548,3 +548,33 @@ def test_discard_for_other_users_upload_returns_404(client, auth_header_for):
     ).json()["id"]
     response = client.post(f"/uploads/{upload_id}/discard", headers=headers_b)
     assert response.status_code == 404
+
+
+def test_discard_during_in_flight_confirm_returns_409_and_keeps_file(
+    client, auth_header_for, upload_base_dir, db_session
+):
+    """Regression for the discard-vs-confirm interleaving: a confirm
+    that has already claimed the upload (moved it to the transitional
+    `STATUS_CONFIRMING`, not yet committed `STATUS_CONFIRMED`) must not
+    lose the image to a discard that lands in that window. Simulated
+    directly by setting the upload to `STATUS_CONFIRMING` via
+    `db_session` — standing in for "a confirm request has already run
+    `claim_upload_for_confirmation` for this upload and is still doing
+    its real work" — rather than racing real concurrent HTTP requests.
+    """
+    headers = auth_header_for("a@example.com")
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+    assert len(list(Path(upload_base_dir).rglob("*.png"))) == 1
+
+    upload = db_session.get(Upload, upload_id)
+    upload.status = "confirming"
+    db_session.commit()
+
+    response = client.post(f"/uploads/{upload_id}/discard", headers=headers)
+    assert response.status_code == 409
+
+    # The file must survive: a discard that loses the race must never
+    # have called delete_upload_image.
+    assert len(list(Path(upload_base_dir).rglob("*.png"))) == 1

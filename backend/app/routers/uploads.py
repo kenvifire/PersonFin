@@ -31,9 +31,21 @@ status before any real work happens; only the request whose `UPDATE`
 actually matched a row proceeds.
 
 `POST /uploads/{id}/discard`: deletes the stored image and marks the
-upload discarded. No atomic claim here — see `discard_upload`'s
-docstring for why that race is benign rather than needing Task 4's
-treatment.
+upload discarded. Needs the same atomic-claim shape as confirm, for a
+reason specific to the two racing *against each other*: confirm's
+claim moves the upload to the transitional `STATUS_CONFIRMING` before
+doing its real work, and `STATUS_CONFIRMING` is not terminal. A
+discard guarded only by `status in TERMINAL_STATUSES` could land
+inside that window, delete the image, and commit `STATUS_DISCARDED` —
+then the in-flight confirm finishes and unconditionally overwrites
+`STATUS_CONFIRMED` on its own stale object, with no re-check. Result:
+a permanently "confirmed" upload whose image is gone, violating the
+"a confirmed upload's image is retained" invariant. `claim_upload_for_discard`
+closes this the same way `claim_upload_for_confirmation` closes
+confirm's own race: a single atomic `UPDATE ... WHERE status IN
+(...)` against the same `CLAIMABLE_STATUSES` allow-list, so a discard
+arriving after a confirm has already claimed the upload correctly
+loses (rowcount 0) instead of deleting the file out from under it.
 """
 
 from pathlib import Path
@@ -88,6 +100,34 @@ def claim_upload_for_confirmation(db: Session, upload_id: int) -> int:
         update(Upload)
         .where(Upload.id == upload_id, Upload.status.in_(CLAIMABLE_STATUSES))
         .values(status=STATUS_CONFIRMING)
+    )
+    db.commit()
+    return result.rowcount
+
+
+def claim_upload_for_discard(db: Session, upload_id: int) -> int:
+    """Atomically move `upload_id` from a claimable status directly to
+    the terminal `STATUS_DISCARDED` in a single `UPDATE`, and return
+    how many rows it matched (0 or 1).
+
+    Mirrors `claim_upload_for_confirmation`'s shape, but with no
+    transitional status in between: unlike confirm, discard has no
+    follow-up work (account resolution, FX lookup, snapshot creation)
+    that could fail and need reverting, so there's nothing to gain by
+    staging through an intermediate status before landing on
+    `STATUS_DISCARDED`.
+
+    Reusing `CLAIMABLE_STATUSES` (rather than "not in TERMINAL_STATUSES")
+    is what makes this safe against a concurrent confirm: an upload a
+    confirm has already claimed is sitting at `STATUS_CONFIRMING`, which
+    is not in `CLAIMABLE_STATUSES`, so this `UPDATE` matches no row
+    (rowcount 0) and the caller must not delete the image — the confirm
+    already owns this upload's fate.
+    """
+    result = db.execute(
+        update(Upload)
+        .where(Upload.id == upload_id, Upload.status.in_(CLAIMABLE_STATUSES))
+        .values(status=STATUS_DISCARDED)
     )
     db.commit()
     return result.rowcount
@@ -257,23 +297,29 @@ def discard_upload(
 ) -> None:
     """Deletes the stored image for `upload_id` and marks it discarded.
 
-    Unlike `confirm_upload`, this doesn't need an atomic claim-before-act
-    step. Two near-simultaneous discard requests both reading a
-    non-terminal status before either commits would each call
-    `delete_upload_image` (a no-op if the file's already gone, per its
-    docstring) and each set `status = STATUS_DISCARDED` — the same
-    final state either way, reached a harmless extra time. That's
-    unlike confirm's race, where a duplicate "success" means a second,
-    permanent, immutable Snapshot row with no unique constraint to
-    catch it. There's no analogous bad side effect here, so a plain
-    check-then-act is sufficient.
+    Two near-simultaneous *discard* requests racing each other would be
+    benign on their own — both would call the idempotent
+    `delete_upload_image` and both would set the same `STATUS_DISCARDED`
+    value, converging on an identical final state. But discard racing
+    against a concurrent *confirm* is not benign: confirm's claim (see
+    `claim_upload_for_confirmation`) parks the upload at the
+    non-terminal `STATUS_CONFIRMING` for the duration of its real work
+    before committing `STATUS_CONFIRMED`. A discard guarded only by
+    `status in TERMINAL_STATUSES` could land in that window, delete the
+    image, and commit `STATUS_DISCARDED` — then the in-flight confirm
+    finishes and unconditionally overwrites `STATUS_CONFIRMED`,
+    producing a "confirmed" upload with no image. `claim_upload_for_discard`
+    closes this the same way confirm's own claim closes its race: a
+    single atomic `UPDATE` against the shared `CLAIMABLE_STATUSES`
+    allow-list, so a discard that loses the race (rowcount 0) never
+    touches the file.
     """
     upload = get_owned_upload_or_404(upload_id, current_user, db)
-    if upload.status in TERMINAL_STATUSES:
+    image_path = upload.image_path
+
+    if claim_upload_for_discard(db, upload_id) == 0:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Upload is already finalized")
 
-    if upload.image_path is not None:
-        delete_upload_image(base_dir, upload.image_path)
-    upload.status = STATUS_DISCARDED
-    db.commit()
+    if image_path is not None:
+        delete_upload_image(base_dir, image_path)
     return None
