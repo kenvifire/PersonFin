@@ -16,6 +16,7 @@ os.environ.setdefault("GOOGLE_CLIENT_SECRET", "test-google-client-secret")
 os.environ.setdefault("AZURE_OPENAI_ENDPOINT", "https://test.example/openai")
 os.environ.setdefault("AZURE_OPENAI_API_KEY", "test-azure-openai-api-key")
 os.environ.setdefault("AZURE_OPENAI_DEPLOYMENT", "test-deployment")
+os.environ.setdefault("DEEPSEEK_API_KEY", "test-deepseek-key")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -27,8 +28,10 @@ import app.models  # noqa: E402,F401 — registers all model tables on Base.meta
 from app.db import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.schemas.extraction import ExtractionResult  # noqa: E402
+from app.schemas.insights import InsightsNarrative  # noqa: E402
 from app.services import image_storage  # noqa: E402
 from app.services.fx import FXRateUnavailable, get_fx_provider  # noqa: E402
+from app.services.insights import InsightGenerationFailed  # noqa: E402
 from app.services.vision import ExtractionFailed, get_vision_extractor  # noqa: E402
 
 
@@ -81,6 +84,22 @@ class FakeVisionExtractor:
         if self.result is not None:
             return self.result
         raise ExtractionFailed(self.error)
+
+
+class FakeInsightGenerator:
+    """An `InsightGenerator` that returns a fixed result or raises
+    `InsightGenerationFailed`, so tests never hit the real DeepSeek API.
+    Same shape as `FakeVisionExtractor`.
+    """
+
+    def __init__(self, result: InsightsNarrative | None = None, error: str | None = None):
+        self.result = result
+        self.error = error
+
+    def generate(self, dashboard, drift):
+        if self.result is not None:
+            return self.result
+        raise InsightGenerationFailed(self.error)
 
 
 # A single in-memory SQLite engine, shared via StaticPool so every connection

@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     azure_openai_endpoint: str
     azure_openai_api_key: str
     azure_openai_deployment: str
+    deepseek_api_key: str
 
     @field_validator("database_url")
     @classmethod
