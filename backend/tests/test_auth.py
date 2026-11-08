@@ -81,3 +81,103 @@ def test_verify_google_id_token_rejects_algorithm_confusion_forgery(monkeypatch)
 
     with pytest.raises(InvalidGoogleToken):
         verify_google_id_token(forged_token)
+
+
+def _login_as(client, monkeypatch, sub: str, email: str):
+    monkeypatch.setattr(
+        "app.routers.auth.verify_google_id_token",
+        lambda token: GoogleProfile(sub=sub, email=email),
+    )
+    return client.post("/auth/google", json={"id_token": "fake"})
+
+
+def test_distinct_google_subs_sharing_an_email_can_both_log_in(client, monkeypatch):
+    """`google_sub` is the identity key; email is not unique."""
+    first = _login_as(client, monkeypatch, "g-1", "shared@example.com")
+    second = _login_as(client, monkeypatch, "g-2", "shared@example.com")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["user"]["id"] != second.json()["user"]["id"]
+
+    again = _login_as(client, monkeypatch, "g-1", "shared@example.com")
+    assert again.json()["user"]["id"] == first.json()["user"]["id"]
+
+
+def test_concurrent_first_login_race_is_a_successful_login(client, monkeypatch, db_session):
+    """Simulate two simultaneous first logins for the same `sub`: the
+    other request's row is committed after our lookup found nothing, so
+    our insert hits the `google_sub` unique constraint. That must resolve
+    to the existing user, not a 500."""
+    from app.models import User
+    from app.routers import auth as auth_router
+
+    winner = User(google_sub="g-race", email="race@example.com")
+    db_session.add(winner)
+    db_session.commit()
+    winner_id = winner.id
+
+    real_find = auth_router._find_user_by_sub
+    lookups = []
+
+    def find_missing_on_first_lookup(db, google_sub):
+        lookups.append(google_sub)
+        if len(lookups) == 1:
+            return None  # the other request hadn't committed yet when we looked
+        return real_find(db, google_sub)
+
+    monkeypatch.setattr(auth_router, "_find_user_by_sub", find_missing_on_first_lookup)
+
+    response = _login_as(client, monkeypatch, "g-race", "race@example.com")
+
+    assert response.status_code == 200
+    assert response.json()["user"]["id"] == winner_id
+    assert len(lookups) == 2  # the insert really did collide and re-query
+    assert decode_session_token(response.json()["access_token"]) == winner_id
+    assert db_session.query(User).filter(User.google_sub == "g-race").count() == 1
+
+
+def _signed_google_token(monkeypatch, claims: dict) -> str:
+    """A genuinely RS256-signed token, verifiable against a faked JWKS
+    containing the signing key."""
+    from authlib.jose import jwt as authlib_jwt
+
+    rsa_key = JsonWebKey.generate_key("RSA", 2048, is_private=True)
+    public_jwk = rsa_key.as_dict(is_private=False)
+    public_jwk["kid"] = "test-key-1"
+
+    def fake_get(url, timeout=10):
+        return httpx.Response(200, json={"keys": [public_jwk]}, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("app.auth.google_oauth.httpx.get", fake_get)
+    token = authlib_jwt.encode({"alg": "RS256", "kid": "test-key-1"}, claims, rsa_key)
+    return token.decode()
+
+
+_VALID_CLAIMS = {
+    "sub": "g-exp",
+    "email": "exp@example.com",
+    "iss": "https://accounts.google.com",
+    "aud": "test-google-client-id",
+}
+
+
+def test_verify_google_id_token_accepts_valid_signed_token(monkeypatch):
+    import time
+
+    token = _signed_google_token(monkeypatch, {**_VALID_CLAIMS, "exp": int(time.time()) + 600})
+    assert verify_google_id_token(token) == GoogleProfile(sub="g-exp", email="exp@example.com")
+
+
+def test_verify_google_id_token_requires_exp_claim(monkeypatch):
+    token = _signed_google_token(monkeypatch, dict(_VALID_CLAIMS))  # no `exp`
+    with pytest.raises(InvalidGoogleToken):
+        verify_google_id_token(token)
+
+
+def test_verify_google_id_token_rejects_expired_token(monkeypatch):
+    import time
+
+    token = _signed_google_token(monkeypatch, {**_VALID_CLAIMS, "exp": int(time.time()) - 600})
+    with pytest.raises(InvalidGoogleToken):
+        verify_google_id_token(token)

@@ -48,6 +48,9 @@ def verify_google_id_token(token: str) -> GoogleProfile:
         claims_options = {
             "iss": {"values": GOOGLE_ISSUERS},
             "aud": {"value": settings.google_client_id},
+            # Without `essential`, Authlib only checks `exp` when the
+            # token happens to carry it; require it outright.
+            "exp": {"essential": True},
         }
         claims = jwt.decode(token, jwk_set, claims_options=claims_options)
         claims.validate()
