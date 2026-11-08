@@ -23,6 +23,19 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 import app.models  # noqa: E402,F401 — registers all model tables on Base.metadata
 from app.db import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
+from app.services.fx import get_fx_provider  # noqa: E402
+
+
+class FakeFXRateProvider:
+    """Fixed exchange rates for tests, so snapshot creation never hits the
+    real FX API. Covers only the pairs exercised by the test suite.
+    """
+
+    _RATES = {("CAD", "USD"): 0.72}
+
+    def get_rate(self, base: str, quote: str) -> float:
+        return self._RATES[(base, quote)]
+
 
 # A single in-memory SQLite engine, shared via StaticPool so every connection
 # checked out during a test sees the same database.
@@ -56,6 +69,7 @@ def client(db_session):
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_fx_provider] = lambda: FakeFXRateProvider()
     try:
         with TestClient(app) as test_client:
             yield test_client

@@ -1,11 +1,12 @@
 from fastapi import FastAPI
 
-from app.routers import accounts, auth
+from app.routers import accounts, auth, snapshots
 
 app = FastAPI(title="PersonFin")
 
 app.include_router(auth.router)
 app.include_router(accounts.router)
+app.include_router(snapshots.router)
 
 
 @app.get("/health")

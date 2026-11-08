@@ -45,3 +45,11 @@ def convert(
     if from_currency == to_currency:
         return amount
     return amount * provider.get_rate(from_currency, to_currency)
+
+
+def get_fx_provider() -> FXRateProvider:
+    """FastAPI dependency used by routers that need an `FXRateProvider`.
+    Tests override this with a fake provider so they never hit the
+    network (see `conftest.py`).
+    """
+    return HttpFXRateProvider()
