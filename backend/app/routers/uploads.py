@@ -11,6 +11,13 @@ runs vision extraction against it. Extraction failure is recorded as
 upload status (`failed`, with `extraction_error` set), not an HTTP
 error — the endpoint itself always succeeds at recording the outcome,
 whichever way it goes.
+
+`POST /uploads/{id}/confirm`: the one place a user's (possibly-edited)
+holdings become a permanent snapshot. Deliberately thin — like
+`routers.snapshots`, it resolves/creates the `Account` and then
+delegates to `services.snapshots.create_snapshot` unmodified, with a
+real `SnapshotIn` built from Plan 1's own `HoldingIn` items, so the
+same value/currency/asset-class validation guards this path too.
 """
 
 from pathlib import Path
@@ -20,13 +27,22 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user
 from app.db import get_db
-from app.models import Upload, User
-from app.models.upload import STATUS_EXTRACTED, STATUS_FAILED, STATUS_PENDING, TERMINAL_STATUSES
-from app.routers._ownership import get_owned_upload_or_404
+from app.models import Account, Snapshot, Upload, User
+from app.models.upload import (
+    STATUS_CONFIRMED,
+    STATUS_EXTRACTED,
+    STATUS_FAILED,
+    STATUS_PENDING,
+    TERMINAL_STATUSES,
+)
+from app.routers._ownership import get_owned_account_or_404, get_owned_upload_or_404
+from app.schemas.snapshot import SnapshotIn, SnapshotOut
 from app.schemas.upload import UploadDetailOut, UploadExtractOut, UploadOut, UploadSummaryOut
-from app.services import vision
+from app.schemas.upload_confirm import ConfirmUploadIn
+from app.services import fx, vision
 from app.services.image_storage import get_upload_base_dir, save_upload_image, validate_upload
 from app.services.matching import suggest_account
+from app.services.snapshots import create_snapshot
 from app.services.vision import ExtractionFailed, VisionExtractor
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
@@ -126,3 +142,40 @@ def get_upload(
     db: Session = Depends(get_db),
 ) -> Upload:
     return get_owned_upload_or_404(upload_id, current_user, db)
+
+
+@router.post("/{upload_id}/confirm", response_model=SnapshotOut, status_code=status.HTTP_201_CREATED)
+def confirm_upload(
+    upload_id: int,
+    payload: ConfirmUploadIn,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    fx_provider: fx.FXRateProvider = Depends(fx.get_fx_provider),
+) -> Snapshot:
+    upload = get_owned_upload_or_404(upload_id, current_user, db)
+    if upload.status in TERMINAL_STATUSES:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Upload is already finalized")
+
+    # `ConfirmUploadIn.exactly_one_of_account_id_or_new_account` already
+    # guarantees exactly one of these is set.
+    if payload.account_id is not None:
+        account = get_owned_account_or_404(payload.account_id, current_user, db)
+    else:
+        assert payload.new_account is not None
+        account = Account(user_id=current_user.id, **payload.new_account.model_dump())
+        db.add(account)
+        db.commit()
+        db.refresh(account)
+
+    # Built from Plan 1's own `HoldingIn` items (via `payload.holdings`,
+    # typed `list[HoldingIn]`) and passed to Plan 1's `create_snapshot`
+    # unmodified — no separate validation or persistence path.
+    snapshot_in = SnapshotIn(taken_at=payload.taken_at, holdings=payload.holdings)
+    snapshot = create_snapshot(db, account, snapshot_in, fx_provider)
+
+    upload.status = STATUS_CONFIRMED
+    upload.matched_account_id = account.id
+    upload.snapshot_id = snapshot.id
+    db.commit()
+    db.refresh(snapshot)
+    return snapshot

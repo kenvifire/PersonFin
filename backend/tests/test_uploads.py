@@ -224,3 +224,163 @@ def test_get_upload_detail_for_other_user_returns_404(client, auth_header_for):
     ).json()["id"]
     response = client.get(f"/uploads/{upload_id}", headers=headers_b)
     assert response.status_code == 404
+
+
+def test_confirm_with_existing_account_creates_snapshot_and_marks_confirmed(client, auth_header_for):
+    headers = auth_header_for("a@example.com")
+    account_id = client.post(
+        "/accounts", json={"name": "RRSP", "institution": "RBC", "account_type": "rrsp"}, headers=headers
+    ).json()["id"]
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+
+    response = client.post(
+        f"/uploads/{upload_id}/confirm",
+        json={
+            "account_id": account_id,
+            "new_account": None,
+            "taken_at": "2026-11-08",
+            "holdings": [{"label": "VFV", "asset_class": "equity", "quantity": 10, "value": 1000.0, "currency": "CAD", "country": "CA"}],
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201
+    assert response.json()["holdings"][0]["label"] == "VFV"
+
+    detail = client.get(f"/uploads/{upload_id}", headers=headers).json()
+    assert detail["status"] == "confirmed"
+    assert detail["matched_account_id"] == account_id
+    assert detail["snapshot_id"] is not None
+
+
+def test_confirm_with_new_account_creates_account_and_snapshot(client, auth_header_for):
+    headers = auth_header_for("a@example.com")
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+
+    response = client.post(
+        f"/uploads/{upload_id}/confirm",
+        json={
+            "account_id": None,
+            "new_account": {"name": "New RRSP", "institution": "RBC", "account_type": "rrsp"},
+            "taken_at": "2026-11-08",
+            "holdings": [{"label": "VFV", "asset_class": "equity", "quantity": 10, "value": 1000.0, "currency": "CAD", "country": "CA"}],
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201
+    accounts = client.get("/accounts", headers=headers).json()
+    assert any(a["name"] == "New RRSP" for a in accounts)
+
+
+def test_confirm_rejects_both_account_id_and_new_account_given(client, auth_header_for):
+    headers = auth_header_for("a@example.com")
+    account_id = client.post(
+        "/accounts", json={"name": "RRSP", "institution": "RBC", "account_type": "rrsp"}, headers=headers
+    ).json()["id"]
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+    response = client.post(
+        f"/uploads/{upload_id}/confirm",
+        json={
+            "account_id": account_id,
+            "new_account": {"name": "New RRSP", "institution": "RBC", "account_type": "rrsp"},
+            "taken_at": "2026-11-08",
+            "holdings": [],
+        },
+        headers=headers,
+    )
+    assert response.status_code == 422
+
+
+def test_confirm_rejects_neither_account_id_nor_new_account_given(client, auth_header_for):
+    headers = auth_header_for("a@example.com")
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+    response = client.post(
+        f"/uploads/{upload_id}/confirm",
+        json={"account_id": None, "new_account": None, "taken_at": "2026-11-08", "holdings": []},
+        headers=headers,
+    )
+    assert response.status_code == 422
+
+
+def test_confirm_reuses_plan1_holding_validation(client, auth_header_for):
+    headers = auth_header_for("a@example.com")
+    account_id = client.post(
+        "/accounts", json={"name": "RRSP", "institution": "RBC", "account_type": "rrsp"}, headers=headers
+    ).json()["id"]
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+    # Negative value is exactly what Plan 1's own HoldingIn.value rejects
+    # (Field(ge=0, ...)) — this proves confirm routes through that same
+    # validation rather than a looser, extraction-specific path.
+    response = client.post(
+        f"/uploads/{upload_id}/confirm",
+        json={
+            "account_id": account_id,
+            "new_account": None,
+            "taken_at": "2026-11-08",
+            "holdings": [{"label": "VFV", "asset_class": "equity", "quantity": 10, "value": -5.0, "currency": "CAD", "country": "CA"}],
+        },
+        headers=headers,
+    )
+    assert response.status_code == 422
+
+
+def test_confirm_twice_returns_409(client, auth_header_for):
+    headers = auth_header_for("a@example.com")
+    account_id = client.post(
+        "/accounts", json={"name": "RRSP", "institution": "RBC", "account_type": "rrsp"}, headers=headers
+    ).json()["id"]
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+    payload = {
+        "account_id": account_id, "new_account": None, "taken_at": "2026-11-08",
+        "holdings": [{"label": "VFV", "asset_class": "equity", "quantity": 10, "value": 1000.0, "currency": "CAD", "country": "CA"}],
+    }
+    client.post(f"/uploads/{upload_id}/confirm", json=payload, headers=headers)
+    response = client.post(f"/uploads/{upload_id}/confirm", json=payload, headers=headers)
+    assert response.status_code == 409
+
+
+def test_confirm_for_other_users_upload_returns_404(client, auth_header_for):
+    headers_a = auth_header_for("a@example.com")
+    headers_b = auth_header_for("b@example.com")
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers_a
+    ).json()["id"]
+    response = client.post(
+        f"/uploads/{upload_id}/confirm",
+        json={"account_id": None, "new_account": {"name": "N", "institution": "N", "account_type": "cash"}, "taken_at": "2026-11-08", "holdings": []},
+        headers=headers_b,
+    )
+    assert response.status_code == 404
+
+
+def test_extract_on_confirmed_upload_returns_409(client, auth_header_for):
+    # Completes the state-machine coverage left open in Task 2 — only
+    # buildable now that confirm exists.
+    headers = auth_header_for("a@example.com")
+    account_id = client.post(
+        "/accounts", json={"name": "RRSP", "institution": "RBC", "account_type": "rrsp"}, headers=headers
+    ).json()["id"]
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+    client.post(
+        f"/uploads/{upload_id}/confirm",
+        json={
+            "account_id": account_id, "new_account": None, "taken_at": "2026-11-08",
+            "holdings": [{"label": "VFV", "asset_class": "equity", "quantity": 10, "value": 1000.0, "currency": "CAD", "country": "CA"}],
+        },
+        headers=headers,
+    )
+    response = client.post(f"/uploads/{upload_id}/extract", headers=headers)
+    assert response.status_code == 409
