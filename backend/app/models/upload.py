@@ -2,12 +2,20 @@
 
 Status state machine (enforced by callers, not the database):
 
-    pending --(extraction succeeds)--> extracted --(user confirms)--> confirmed
+    pending --(extraction succeeds)--> extracted --(user confirms)--> confirming --> confirmed
     pending --(extraction succeeds)--> extracted --(user discards)--> discarded
     pending --(extraction fails)-----> failed
 
 `confirmed` and `discarded` are terminal: once there, an upload is never
-revisited.
+revisited. `confirming` is a short-lived transitional status, NOT
+terminal: it exists only to let `POST /uploads/{id}/confirm` atomically
+claim an upload (via a single `UPDATE ... WHERE status IN (pending,
+extracted, failed)`) before doing any real work, so two near-simultaneous
+confirm requests for the same upload can't both pass a check-then-act
+race and each create a permanent, immutable Snapshot. An upload that
+fails after being claimed is reverted back to its pre-claim status, so
+`confirming` should never be observed to "stick" outside of that one
+request's handling.
 """
 
 from datetime import datetime
@@ -21,6 +29,7 @@ from app.db import Base
 STATUS_PENDING = "pending"
 STATUS_EXTRACTED = "extracted"
 STATUS_FAILED = "failed"
+STATUS_CONFIRMING = "confirming"
 STATUS_CONFIRMED = "confirmed"
 STATUS_DISCARDED = "discarded"
 

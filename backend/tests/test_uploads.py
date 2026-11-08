@@ -9,7 +9,8 @@ image and records the outcome (success or failure) as upload status.
 from datetime import date
 
 from app.main import app
-from app.models import Upload
+from app.models import Account, Snapshot, Upload
+from app.routers.uploads import claim_upload_for_confirmation
 from app.schemas.extraction import DraftHolding, ExtractionResult
 from app.services import image_storage, vision
 from conftest import FakeVisionExtractor
@@ -333,7 +334,7 @@ def test_confirm_reuses_plan1_holding_validation(client, auth_header_for):
     assert response.status_code == 422
 
 
-def test_confirm_twice_returns_409(client, auth_header_for):
+def test_confirm_twice_returns_409(client, auth_header_for, db_session):
     headers = auth_header_for("a@example.com")
     account_id = client.post(
         "/accounts", json={"name": "RRSP", "institution": "RBC", "account_type": "rrsp"}, headers=headers
@@ -348,6 +349,92 @@ def test_confirm_twice_returns_409(client, auth_header_for):
     client.post(f"/uploads/{upload_id}/confirm", json=payload, headers=headers)
     response = client.post(f"/uploads/{upload_id}/confirm", json=payload, headers=headers)
     assert response.status_code == 409
+
+    # The real risk of a confirm-twice race isn't the HTTP status of the
+    # losing call — it's a second, permanent Snapshot silently existing
+    # for the same screenshot. Check the database directly, not just
+    # the HTTP-layer symptom.
+    assert db_session.query(Snapshot).filter(Snapshot.account_id == account_id).count() == 1
+
+
+def test_confirm_atomic_claim_rejects_a_second_simultaneous_claim(client, auth_header_for, db_session):
+    """Real concurrent HTTP requests are awkward to simulate reliably in
+    a synchronous TestClient, so this exercises the atomic-claim step
+    directly, simulating two racers calling it back-to-back for the same
+    upload. The first call must claim it (rowcount 1); the second must
+    NOT be able to re-claim an upload already moved to
+    `STATUS_CONFIRMING` (rowcount 0) — this is exactly what closes the
+    check-then-act race that could otherwise let both racers proceed to
+    call `create_snapshot` and each create a real Snapshot."""
+    headers = auth_header_for("a@example.com")
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+
+    first_claim = claim_upload_for_confirmation(db_session, upload_id)
+    second_claim = claim_upload_for_confirmation(db_session, upload_id)
+
+    assert first_claim == 1
+    assert second_claim == 0
+
+
+def test_confirm_creates_exactly_one_snapshot_for_the_account(client, auth_header_for, db_session):
+    headers = auth_header_for("a@example.com")
+    account_id = client.post(
+        "/accounts", json={"name": "RRSP", "institution": "RBC", "account_type": "rrsp"}, headers=headers
+    ).json()["id"]
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+
+    response = client.post(
+        f"/uploads/{upload_id}/confirm",
+        json={
+            "account_id": account_id,
+            "new_account": None,
+            "taken_at": "2026-11-08",
+            "holdings": [{"label": "VFV", "asset_class": "equity", "quantity": 10, "value": 1000.0, "currency": "CAD", "country": "CA"}],
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201
+    assert db_session.query(Snapshot).filter(Snapshot.account_id == account_id).count() == 1
+
+
+def test_confirm_with_new_account_does_not_orphan_account_when_create_snapshot_fails(
+    client, auth_header_for, use_fx_provider, db_session
+):
+    """If `create_snapshot` fails after a brand-new `Account` was
+    created for this confirm, the account must not be left behind as an
+    orphaned, snapshot-less row — otherwise a retry with the same
+    `new_account` payload would create a duplicate account every time."""
+    from conftest import FailingFXRateProvider
+
+    headers = auth_header_for("a@example.com")
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+    use_fx_provider(FailingFXRateProvider())
+
+    response = client.post(
+        f"/uploads/{upload_id}/confirm",
+        json={
+            "account_id": None,
+            "new_account": {"name": "Orphan RRSP", "institution": "RBC", "account_type": "rrsp"},
+            "taken_at": "2026-11-08",
+            # CAD requires an FX lookup, which FailingFXRateProvider always fails.
+            "holdings": [{"label": "VFV", "asset_class": "equity", "quantity": 10, "value": 1000.0, "currency": "CAD", "country": "CA"}],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 503
+    assert db_session.query(Account).filter(Account.name == "Orphan RRSP").count() == 0
+
+    # The upload must also not be stuck at the transitional status —
+    # it should have been reverted so a retry remains possible.
+    detail = client.get(f"/uploads/{upload_id}", headers=headers).json()
+    assert detail["status"] != "confirming"
 
 
 def test_confirm_for_other_users_upload_returns_404(client, auth_header_for):

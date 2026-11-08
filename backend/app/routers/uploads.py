@@ -18,11 +18,23 @@ holdings become a permanent snapshot. Deliberately thin — like
 delegates to `services.snapshots.create_snapshot` unmodified, with a
 real `SnapshotIn` built from Plan 1's own `HoldingIn` items, so the
 same value/currency/asset-class validation guards this path too.
+
+Two near-simultaneous confirm requests for the same upload must never
+both succeed — each would independently call `create_snapshot`,
+creating two real, immutable Snapshot rows for one screenshot, with no
+unique constraint to stop it. A plain "SELECT, check status, act"
+sequence has a check-then-act race: both requests could read a
+non-terminal status before either commits. `claim_upload_for_confirmation`
+closes that race with a single atomic `UPDATE ... WHERE status IN
+(...)`, moving the upload to the transitional `STATUS_CONFIRMING`
+status before any real work happens; only the request whose `UPDATE`
+actually matched a row proceeds.
 """
 
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user
@@ -30,6 +42,7 @@ from app.db import get_db
 from app.models import Account, Snapshot, Upload, User
 from app.models.upload import (
     STATUS_CONFIRMED,
+    STATUS_CONFIRMING,
     STATUS_EXTRACTED,
     STATUS_FAILED,
     STATUS_PENDING,
@@ -46,6 +59,32 @@ from app.services.snapshots import create_snapshot
 from app.services.vision import ExtractionFailed, VisionExtractor
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
+
+# The only statuses a confirm attempt may start from. Deliberately an
+# explicit allow-list, not "not in TERMINAL_STATUSES": the latter would
+# still let a second, racing confirm request claim an upload that's
+# already `STATUS_CONFIRMING` (which isn't terminal), defeating the
+# whole point of the claim.
+CLAIMABLE_STATUSES = (STATUS_PENDING, STATUS_EXTRACTED, STATUS_FAILED)
+
+
+def claim_upload_for_confirmation(db: Session, upload_id: int) -> int:
+    """Atomically move `upload_id` from a claimable status to the
+    transitional `STATUS_CONFIRMING` in a single `UPDATE`, and return
+    how many rows it matched (0 or 1, since `id` is a primary key).
+
+    A caller that gets back `0` must treat the upload as unconfirmable
+    right now (already terminal, or already being confirmed by another
+    in-flight request) rather than proceeding. Commits immediately so
+    the claim is visible to any other request as soon as it succeeds.
+    """
+    result = db.execute(
+        update(Upload)
+        .where(Upload.id == upload_id, Upload.status.in_(CLAIMABLE_STATUSES))
+        .values(status=STATUS_CONFIRMING)
+    )
+    db.commit()
+    return result.rowcount
 
 
 @router.post("", response_model=UploadOut, status_code=status.HTTP_201_CREATED)
@@ -153,25 +192,47 @@ def confirm_upload(
     fx_provider: fx.FXRateProvider = Depends(fx.get_fx_provider),
 ) -> Snapshot:
     upload = get_owned_upload_or_404(upload_id, current_user, db)
-    if upload.status in TERMINAL_STATUSES:
+    original_status = upload.status
+
+    # Atomic claim: closes the check-then-act race described in this
+    # module's docstring. A rowcount of 0 means the upload was already
+    # terminal, or another in-flight request already claimed it.
+    if claim_upload_for_confirmation(db, upload_id) == 0:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Upload is already finalized")
 
-    # `ConfirmUploadIn.exactly_one_of_account_id_or_new_account` already
-    # guarantees exactly one of these is set.
-    if payload.account_id is not None:
-        account = get_owned_account_or_404(payload.account_id, current_user, db)
-    else:
-        assert payload.new_account is not None
-        account = Account(user_id=current_user.id, **payload.new_account.model_dump())
-        db.add(account)
-        db.commit()
-        db.refresh(account)
+    try:
+        # `ConfirmUploadIn.exactly_one_of_account_id_or_new_account` already
+        # guarantees exactly one of these is set.
+        if payload.account_id is not None:
+            account = get_owned_account_or_404(payload.account_id, current_user, db)
+        else:
+            assert payload.new_account is not None
+            account = Account(user_id=current_user.id, **payload.new_account.model_dump())
+            db.add(account)
+            # `flush`, not `commit`: this gets a real `account.id` for
+            # `create_snapshot` without persisting the account on its
+            # own. If `create_snapshot` raises below, the `rollback` in
+            # the `except` clause undoes this insert too, instead of
+            # leaving an orphaned, snapshot-less `Account` behind that a
+            # retry with the same `new_account` would then duplicate.
+            db.flush()
 
-    # Built from Plan 1's own `HoldingIn` items (via `payload.holdings`,
-    # typed `list[HoldingIn]`) and passed to Plan 1's `create_snapshot`
-    # unmodified — no separate validation or persistence path.
-    snapshot_in = SnapshotIn(taken_at=payload.taken_at, holdings=payload.holdings)
-    snapshot = create_snapshot(db, account, snapshot_in, fx_provider)
+        # Built from Plan 1's own `HoldingIn` items (via `payload.holdings`,
+        # typed `list[HoldingIn]`) and passed to Plan 1's `create_snapshot`
+        # unmodified — no separate validation or persistence path.
+        snapshot_in = SnapshotIn(taken_at=payload.taken_at, holdings=payload.holdings)
+        snapshot = create_snapshot(db, account, snapshot_in, fx_provider)
+    except Exception:
+        # Undo any uncommitted work from this attempt (e.g. the flushed
+        # new Account above) and release the claim by restoring the
+        # upload's pre-claim status, so it isn't stuck at
+        # `STATUS_CONFIRMING` forever and a retry remains possible.
+        # Re-raising lets existing global handlers (e.g.
+        # `FXRateUnavailable` -> 503) still apply.
+        db.rollback()
+        db.execute(update(Upload).where(Upload.id == upload_id).values(status=original_status))
+        db.commit()
+        raise
 
     upload.status = STATUS_CONFIRMED
     upload.matched_account_id = account.id
