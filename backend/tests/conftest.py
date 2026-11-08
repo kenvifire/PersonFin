@@ -23,18 +23,40 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 import app.models  # noqa: E402,F401 — registers all model tables on Base.metadata
 from app.db import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
-from app.services.fx import get_fx_provider  # noqa: E402
+from app.services.fx import FXRateUnavailable, get_fx_provider  # noqa: E402
 
 
 class FakeFXRateProvider:
-    """Fixed exchange rates for tests, so snapshot creation never hits the
-    real FX API. Covers only the pairs exercised by the test suite.
+    """Fixed exchange rates for tests, so nothing ever hits the real FX
+    API. Covers every pair among `SUPPORTED_CURRENCIES` (both directions,
+    derived from a fixed USD value per unit of each currency); any other
+    pair raises `FXRateUnavailable`, like the real provider would.
+    Records each lookup in `calls`.
     """
 
-    _RATES = {("CAD", "USD"): 0.72}
+    USD_PER_UNIT = {
+        "USD": 1.0,
+        "CAD": 0.72,
+        "CNY": 0.14,
+        "HKD": 0.128,
+        "SGD": 0.74,
+    }
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
 
     def get_rate(self, base: str, quote: str) -> float:
-        return self._RATES[(base, quote)]
+        self.calls.append((base, quote))
+        if base not in self.USD_PER_UNIT or quote not in self.USD_PER_UNIT:
+            raise FXRateUnavailable(base, quote)
+        return self.USD_PER_UNIT[base] / self.USD_PER_UNIT[quote]
+
+
+class FailingFXRateProvider:
+    """Simulates an FX outage: every lookup fails."""
+
+    def get_rate(self, base: str, quote: str) -> float:
+        raise FXRateUnavailable(base, quote)
 
 
 # A single in-memory SQLite engine, shared via StaticPool so every connection
@@ -100,3 +122,16 @@ def auth_header_for(client, monkeypatch):
         return {"Authorization": f"Bearer {token}"}
 
     return _login
+
+
+@pytest.fixture()
+def use_fx_provider(client):
+    """Returns a function that swaps the FX provider the app uses for the
+    rest of the test (e.g. to a `FailingFXRateProvider`, or a specific
+    `FakeFXRateProvider` instance whose `calls` the test inspects)."""
+
+    def _use(provider):
+        app.dependency_overrides[get_fx_provider] = lambda: provider
+        return provider
+
+    return _use

@@ -1,14 +1,17 @@
 """Pydantic schemas for the `/accounts/{account_id}/snapshots` API.
 
-Holdings are validated here, at the edge, so invalid data (negative
-values, unrecognized currencies) never reaches
-`services.snapshots.create_snapshot`.
+Holdings are validated here, at the edge, so invalid data (negative or
+non-finite values, unrecognized currencies or asset classes) never
+reaches `services.snapshots.create_snapshot`. This matters doubly
+because snapshots are immutable: a bad value accepted here could never
+be removed.
 """
 
 from datetime import date, datetime
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
+from app.services.allocation import normalize_asset_class
 from app.services.fx import SUPPORTED_CURRENCIES
 
 # Holdings may also be reported in "CRYPTO" — a placeholder currency for
@@ -20,17 +23,15 @@ ALLOWED_HOLDING_CURRENCIES = SUPPORTED_CURRENCIES | {"CRYPTO"}
 class HoldingIn(BaseModel):
     label: str
     asset_class: str
-    quantity: float | None = None
-    value: float
+    quantity: float | None = Field(default=None, allow_inf_nan=False)
+    value: float = Field(ge=0, allow_inf_nan=False)
     currency: str
     country: str
 
-    @field_validator("value")
+    @field_validator("asset_class")
     @classmethod
-    def value_must_be_non_negative(cls, value: float) -> float:
-        if value < 0:
-            raise ValueError("value must be >= 0")
-        return value
+    def asset_class_must_be_recognized(cls, asset_class: str) -> str:
+        return normalize_asset_class(asset_class)
 
     @field_validator("currency")
     @classmethod

@@ -56,3 +56,46 @@ def test_compute_drift_flags_only_over_threshold():
 
     flags_within_threshold = compute_drift({"crypto": 12.0}, targets)
     assert flags_within_threshold == []
+
+
+def test_drift_for_user_with_no_net_worth_is_empty(client, auth_header_for):
+    """No holdings means no allocation to drift from — not one
+    "fully missing" flag per target."""
+    headers = auth_header_for("empty@example.com")
+    response = client.get("/targets/drift?currency=USD", headers=headers)
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_put_target_normalizes_asset_class(client, auth_header_for):
+    headers = auth_header_for("norm@example.com")
+    response = client.put("/targets/Crypto", json={"target_pct": 15.0}, headers=headers)
+    assert response.status_code == 200
+    assert response.json()["asset_class"] == "crypto"
+
+    body = client.get("/targets", headers=headers).json()
+    assert sorted(t["asset_class"] for t in body) == sorted(DEFAULT_TARGETS)
+
+
+@pytest.mark.parametrize("asset_class", ["not_a_real_class", "drift"])
+def test_put_target_rejects_unknown_asset_class(client, auth_header_for, asset_class):
+    headers = auth_header_for("unknown@example.com")
+    response = client.put(f"/targets/{asset_class}", json={"target_pct": 15.0}, headers=headers)
+    assert response.status_code == 422
+    body = client.get("/targets", headers=headers).json()
+    assert asset_class not in {t["asset_class"] for t in body}
+
+
+@pytest.mark.parametrize("target_pct", [-1, 100.5, "Infinity", "NaN"])
+def test_put_target_rejects_out_of_range_pct(client, auth_header_for, target_pct):
+    headers = auth_header_for("range@example.com")
+    response = client.put("/targets/crypto", json={"target_pct": target_pct}, headers=headers)
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("target_pct", [0, 100])
+def test_put_target_accepts_range_bounds(client, auth_header_for, target_pct):
+    headers = auth_header_for("bounds@example.com")
+    response = client.put("/targets/crypto", json={"target_pct": target_pct}, headers=headers)
+    assert response.status_code == 200
+    assert response.json()["target_pct"] == target_pct

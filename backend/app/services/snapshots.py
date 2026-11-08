@@ -31,12 +31,18 @@ def create_snapshot(
     fx_provider: FXRateProvider,
 ) -> Snapshot:
     snapshot = Snapshot(account_id=account.id, taken_at=data.taken_at)
+    # One rate lookup per currency per snapshot, so every holding in the
+    # same currency is locked at the same rate. All lookups happen before
+    # anything is written, so an FX failure leaves no partial snapshot.
+    rates_to_usd: dict[str, float] = {}
 
     for item in data.holdings:
         if item.currency == CRYPTO_CURRENCY:
             fx_rate_to_usd = 1.0
         else:
-            fx_rate_to_usd = fx.convert(1.0, item.currency, USD, fx_provider)
+            if item.currency not in rates_to_usd:
+                rates_to_usd[item.currency] = fx.convert(1.0, item.currency, USD, fx_provider)
+            fx_rate_to_usd = rates_to_usd[item.currency]
         value_usd = item.value * fx_rate_to_usd
 
         snapshot.holdings.append(

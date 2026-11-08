@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class TargetOut(BaseModel):
@@ -16,7 +16,7 @@ class TargetOut(BaseModel):
 
 
 class TargetUpdateIn(BaseModel):
-    target_pct: float
+    target_pct: float = Field(ge=0, le=100, allow_inf_nan=False)
 
 
 class DriftFlag(BaseModel):

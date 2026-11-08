@@ -1,13 +1,22 @@
+from collections.abc import Generator
 from typing import Protocol
 
 import httpx
 
 SUPPORTED_CURRENCIES = {"CAD", "USD", "CNY", "HKD", "SGD"}
 
-FRANKFURTER_URL = "https://api.frankfurter.app/latest"
+# Frankfurter moved from api.frankfurter.app to api.frankfurter.dev/v1;
+# the old host now 301-redirects, which httpx does not follow by default.
+FRANKFURTER_URL = "https://api.frankfurter.dev/v1/latest"
+
+FX_HTTP_TIMEOUT_SECONDS = 10.0
 
 
 class FXRateUnavailable(Exception):
+    """The single exception type for every FX lookup failure (network
+    error, timeout, bad status, malformed body, missing rate). Mapped to a
+    503 response by the handler registered in `app.main`."""
+
     def __init__(self, base: str, quote: str):
         super().__init__(f"No FX rate available for {base} -> {quote}")
         self.base = base
@@ -21,19 +30,30 @@ class FXRateProvider(Protocol):
 class HttpFXRateProvider:
     """Fetches spot rates from the free Frankfurter (ECB) API."""
 
-    def __init__(self, client: httpx.Client | None = None):
-        self._client = client or httpx.Client(timeout=10.0)
+    def __init__(self, client: httpx.Client):
+        self._client = client
 
     def get_rate(self, base: str, quote: str) -> float:
-        response = self._client.get(
-            FRANKFURTER_URL, params={"from": base, "to": quote}
-        )
-        if response.status_code != 200:
-            raise FXRateUnavailable(base, quote)
-        rate = response.json().get("rates", {}).get(quote)
+        try:
+            response = self._client.get(
+                FRANKFURTER_URL, params={"from": base, "to": quote}
+            )
+            if response.status_code != 200:
+                raise FXRateUnavailable(base, quote)
+            body = response.json()
+        except httpx.HTTPError as exc:  # connect errors, timeouts, etc.
+            raise FXRateUnavailable(base, quote) from exc
+        except ValueError as exc:  # non-JSON response body
+            raise FXRateUnavailable(base, quote) from exc
+
+        rates = body.get("rates") if isinstance(body, dict) else None
+        rate = rates.get(quote) if isinstance(rates, dict) else None
         if rate is None:
             raise FXRateUnavailable(base, quote)
-        return float(rate)
+        try:
+            return float(rate)
+        except (TypeError, ValueError) as exc:
+            raise FXRateUnavailable(base, quote) from exc
 
 
 def convert(
@@ -47,9 +67,15 @@ def convert(
     return amount * provider.get_rate(from_currency, to_currency)
 
 
-def get_fx_provider() -> FXRateProvider:
+def get_fx_provider() -> Generator[FXRateProvider, None, None]:
     """FastAPI dependency used by routers that need an `FXRateProvider`.
-    Tests override this with a fake provider so they never hit the
-    network (see `conftest.py`).
+
+    Opens one `httpx.Client` per request and closes it once the request
+    is done, so connections are never leaked. Tests override this with a
+    fake provider so they never hit the network (see `conftest.py`).
     """
-    return HttpFXRateProvider()
+    client = httpx.Client(timeout=FX_HTTP_TIMEOUT_SECONDS)
+    try:
+        yield HttpFXRateProvider(client)
+    finally:
+        client.close()

@@ -31,6 +31,23 @@ DEFAULT_TARGETS: dict[str, float] = {
     "bond": 10.0,
 }
 
+# The closed set of asset classes a holding or allocation target may use.
+# Kept identical to DEFAULT_TARGETS' keys so every class a holding can be
+# reported in always has a target (seeded on first access), and drift can
+# never silently ignore a holding's class.
+ASSET_CLASSES: frozenset[str] = frozenset(DEFAULT_TARGETS)
+
+
+def normalize_asset_class(value: str) -> str:
+    """Normalize (strip + lowercase) and validate an asset class.
+    Raises `ValueError` if it isn't one of `ASSET_CLASSES`."""
+    normalized = value.strip().lower()
+    if normalized not in ASSET_CLASSES:
+        raise ValueError(
+            f"unrecognized asset_class: {value!r} (expected one of {sorted(ASSET_CLASSES)})"
+        )
+    return normalized
+
 # Minimum absolute percentage-point gap between actual and target
 # allocation before it's surfaced as drift.
 DRIFT_THRESHOLD_PCT = 5.0
