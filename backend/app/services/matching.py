@@ -35,7 +35,10 @@ def suggest_account(
     if not accounts:
         return None
 
-    extracted = _normalize(f"{institution} {account_label}")
+    # Join only the parts actually extracted: interpolating `None` would
+    # put a literal "none" into the comparison string and drag down the
+    # similarity of an otherwise-good single-field match.
+    extracted = _normalize(" ".join(part for part in (institution, account_label) if part is not None))
 
     best_account: Account | None = None
     best_ratio = 0.0
