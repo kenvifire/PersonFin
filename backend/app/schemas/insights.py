@@ -7,6 +7,9 @@ parsed and validated into — the insights-generation analog of
 
 from pydantic import BaseModel, Field
 
+from app.schemas.dashboard import DashboardOut
+from app.schemas.target import DriftFlag
+
 
 class ActionItem(BaseModel):
     asset_class: str
@@ -16,3 +19,10 @@ class ActionItem(BaseModel):
 class InsightsNarrative(BaseModel):
     summary: str
     action_items: list[ActionItem] = Field(default_factory=list)
+
+
+class InsightsOut(BaseModel):
+    dashboard: DashboardOut
+    drift: list[DriftFlag]
+    narrative: InsightsNarrative
+    narrative_unavailable: bool

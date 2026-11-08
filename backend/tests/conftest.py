@@ -31,7 +31,7 @@ from app.schemas.extraction import ExtractionResult  # noqa: E402
 from app.schemas.insights import InsightsNarrative  # noqa: E402
 from app.services import image_storage  # noqa: E402
 from app.services.fx import FXRateUnavailable, get_fx_provider  # noqa: E402
-from app.services.insights import InsightGenerationFailed  # noqa: E402
+from app.services.insights import InsightGenerationFailed, get_insight_generator  # noqa: E402
 from app.services.vision import ExtractionFailed, get_vision_extractor  # noqa: E402
 
 
@@ -150,6 +150,9 @@ def client(db_session, upload_base_dir):
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_fx_provider] = lambda: FakeFXRateProvider()
     app.dependency_overrides[get_vision_extractor] = lambda: FakeVisionExtractor(result=ExtractionResult())
+    app.dependency_overrides[get_insight_generator] = lambda: FakeInsightGenerator(
+        result=InsightsNarrative(summary="Stub insight narrative.", action_items=[])
+    )
     try:
         with TestClient(app) as test_client:
             yield test_client

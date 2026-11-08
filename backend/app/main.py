@@ -6,7 +6,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.routers import accounts, auth, dashboard, snapshots, targets, todos, uploads
+from app.routers import accounts, auth, dashboard, insights, snapshots, targets, todos, uploads
 from app.services.fx import FXRateUnavailable
 from app.services.image_storage import UnsupportedUploadError
 
@@ -19,6 +19,7 @@ app.include_router(accounts.router)
 app.include_router(snapshots.router)
 app.include_router(dashboard.router)
 app.include_router(targets.router)
+app.include_router(insights.router)
 app.include_router(todos.router)
 app.include_router(uploads.router)
 
