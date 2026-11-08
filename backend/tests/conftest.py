@@ -61,3 +61,28 @@ def client(db_session):
             yield test_client
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def auth_header_for(client, monkeypatch):
+    """Returns a function that logs a user in (creating them on first use)
+    via the real `POST /auth/google` flow and returns an `Authorization`
+    header dict carrying their session token.
+
+    Each call fakes `verify_google_id_token` to return a `GoogleProfile`
+    derived from the given email, so distinct emails become distinct users
+    without needing real Google ID tokens.
+    """
+    from app.auth.google_oauth import GoogleProfile
+
+    def _login(email: str) -> dict[str, str]:
+        monkeypatch.setattr(
+            "app.routers.auth.verify_google_id_token",
+            lambda token: GoogleProfile(sub=f"sub-{email}", email=email),
+        )
+        response = client.post("/auth/google", json={"id_token": "fake"})
+        assert response.status_code == 200
+        token = response.json()["access_token"]
+        return {"Authorization": f"Bearer {token}"}
+
+    return _login
