@@ -29,6 +29,11 @@ closes that race with a single atomic `UPDATE ... WHERE status IN
 (...)`, moving the upload to the transitional `STATUS_CONFIRMING`
 status before any real work happens; only the request whose `UPDATE`
 actually matched a row proceeds.
+
+`POST /uploads/{id}/discard`: deletes the stored image and marks the
+upload discarded. No atomic claim here — see `discard_upload`'s
+docstring for why that race is benign rather than needing Task 4's
+treatment.
 """
 
 from pathlib import Path
@@ -43,6 +48,7 @@ from app.models import Account, Snapshot, Upload, User
 from app.models.upload import (
     STATUS_CONFIRMED,
     STATUS_CONFIRMING,
+    STATUS_DISCARDED,
     STATUS_EXTRACTED,
     STATUS_FAILED,
     STATUS_PENDING,
@@ -53,7 +59,7 @@ from app.schemas.snapshot import SnapshotIn, SnapshotOut
 from app.schemas.upload import UploadDetailOut, UploadExtractOut, UploadOut, UploadSummaryOut
 from app.schemas.upload_confirm import ConfirmUploadIn
 from app.services import fx, vision
-from app.services.image_storage import get_upload_base_dir, save_upload_image, validate_upload
+from app.services.image_storage import delete_upload_image, get_upload_base_dir, save_upload_image, validate_upload
 from app.services.matching import suggest_account
 from app.services.snapshots import create_snapshot
 from app.services.vision import ExtractionFailed, VisionExtractor
@@ -240,3 +246,34 @@ def confirm_upload(
     db.commit()
     db.refresh(snapshot)
     return snapshot
+
+
+@router.post("/{upload_id}/discard", status_code=status.HTTP_204_NO_CONTENT)
+def discard_upload(
+    upload_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    base_dir: str = Depends(get_upload_base_dir),
+) -> None:
+    """Deletes the stored image for `upload_id` and marks it discarded.
+
+    Unlike `confirm_upload`, this doesn't need an atomic claim-before-act
+    step. Two near-simultaneous discard requests both reading a
+    non-terminal status before either commits would each call
+    `delete_upload_image` (a no-op if the file's already gone, per its
+    docstring) and each set `status = STATUS_DISCARDED` — the same
+    final state either way, reached a harmless extra time. That's
+    unlike confirm's race, where a duplicate "success" means a second,
+    permanent, immutable Snapshot row with no unique constraint to
+    catch it. There's no analogous bad side effect here, so a plain
+    check-then-act is sufficient.
+    """
+    upload = get_owned_upload_or_404(upload_id, current_user, db)
+    if upload.status in TERMINAL_STATUSES:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Upload is already finalized")
+
+    if upload.image_path is not None:
+        delete_upload_image(base_dir, upload.image_path)
+    upload.status = STATUS_DISCARDED
+    db.commit()
+    return None

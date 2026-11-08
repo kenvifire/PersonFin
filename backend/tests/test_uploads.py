@@ -7,6 +7,7 @@ image and records the outcome (success or failure) as upload status.
 """
 
 from datetime import date
+from pathlib import Path
 
 from app.main import app
 from app.models import Account, Snapshot, Upload
@@ -471,3 +472,79 @@ def test_extract_on_confirmed_upload_returns_409(client, auth_header_for):
     )
     response = client.post(f"/uploads/{upload_id}/extract", headers=headers)
     assert response.status_code == 409
+
+
+def test_discard_deletes_file_and_marks_discarded(client, auth_header_for, upload_base_dir):
+    headers = auth_header_for("a@example.com")
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+    assert len(list(Path(upload_base_dir).rglob("*.png"))) == 1
+
+    response = client.post(f"/uploads/{upload_id}/discard", headers=headers)
+    assert response.status_code == 204
+    assert client.get(f"/uploads/{upload_id}", headers=headers).json()["status"] == "discarded"
+    assert list(Path(upload_base_dir).rglob("*.png")) == []
+
+
+def test_discard_already_confirmed_returns_409(client, auth_header_for):
+    headers = auth_header_for("a@example.com")
+    account_id = client.post(
+        "/accounts", json={"name": "RRSP", "institution": "RBC", "account_type": "rrsp"}, headers=headers
+    ).json()["id"]
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+    client.post(
+        f"/uploads/{upload_id}/confirm",
+        json={
+            "account_id": account_id, "new_account": None, "taken_at": "2026-11-08",
+            "holdings": [{"label": "VFV", "asset_class": "equity", "quantity": 10, "value": 1000.0, "currency": "CAD", "country": "CA"}],
+        },
+        headers=headers,
+    )
+    response = client.post(f"/uploads/{upload_id}/discard", headers=headers)
+    assert response.status_code == 409
+
+
+def test_extract_on_discarded_upload_returns_409(client, auth_header_for):
+    # Completes the state-machine coverage from Task 2/4.
+    headers = auth_header_for("a@example.com")
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+    client.post(f"/uploads/{upload_id}/discard", headers=headers)
+    response = client.post(f"/uploads/{upload_id}/extract", headers=headers)
+    assert response.status_code == 409
+
+
+def test_confirm_on_discarded_upload_returns_409(client, auth_header_for):
+    # Completes the "already in a terminal state" Review Focus item for
+    # confirm specifically (Task 4 only covered confirm-after-confirm).
+    headers = auth_header_for("a@example.com")
+    account_id = client.post(
+        "/accounts", json={"name": "RRSP", "institution": "RBC", "account_type": "rrsp"}, headers=headers
+    ).json()["id"]
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers
+    ).json()["id"]
+    client.post(f"/uploads/{upload_id}/discard", headers=headers)
+    response = client.post(
+        f"/uploads/{upload_id}/confirm",
+        json={
+            "account_id": account_id, "new_account": None, "taken_at": "2026-11-08",
+            "holdings": [{"label": "VFV", "asset_class": "equity", "quantity": 10, "value": 1000.0, "currency": "CAD", "country": "CA"}],
+        },
+        headers=headers,
+    )
+    assert response.status_code == 409
+
+
+def test_discard_for_other_users_upload_returns_404(client, auth_header_for):
+    headers_a = auth_header_for("a@example.com")
+    headers_b = auth_header_for("b@example.com")
+    upload_id = client.post(
+        "/uploads", files={"file": ("x.png", b"fake-png-bytes", "image/png")}, headers=headers_a
+    ).json()["id"]
+    response = client.post(f"/uploads/{upload_id}/discard", headers=headers_b)
+    assert response.status_code == 404
