@@ -3,26 +3,16 @@
 indistinguishable from a nonexistent one and returns 404.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user
 from app.db import get_db
 from app.models import Todo, User
+from app.routers._ownership import get_owned_todo_or_404
 from app.schemas.todo import TodoIn, TodoOut, TodoUpdate
 
 router = APIRouter(prefix="/todos", tags=["todos"])
-
-
-def _get_owned_todo_or_404(todo_id: int, current_user: User, db: Session) -> Todo:
-    todo = (
-        db.query(Todo)
-        .filter(Todo.id == todo_id, Todo.user_id == current_user.id)
-        .first()
-    )
-    if todo is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Todo not found")
-    return todo
 
 
 @router.post("", response_model=TodoOut, status_code=status.HTTP_201_CREATED)
@@ -57,7 +47,7 @@ def update_todo(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Todo:
-    todo = _get_owned_todo_or_404(todo_id, current_user, db)
+    todo = get_owned_todo_or_404(todo_id, current_user, db)
     todo.done = payload.done
     db.commit()
     db.refresh(todo)
@@ -70,6 +60,6 @@ def delete_todo(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> None:
-    todo = _get_owned_todo_or_404(todo_id, current_user, db)
+    todo = get_owned_todo_or_404(todo_id, current_user, db)
     db.delete(todo)
     db.commit()

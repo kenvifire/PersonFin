@@ -110,3 +110,49 @@ def test_delete_another_users_account_returns_404(client, auth_header_for):
 def test_accounts_require_authentication(client):
     assert client.get("/accounts").status_code == 401
     assert client.post("/accounts", json={"name": "X", "institution": "Y", "account_type": "cash"}).status_code == 401
+
+
+_SNAPSHOT = {"taken_at": "2026-11-08", "holdings": [{"label": "Cash", "asset_class": "cash", "quantity": None, "value": 100.0, "currency": "USD", "country": "CA"}]}
+
+
+def test_delete_account_with_snapshots_is_409_and_keeps_history(client, auth_header_for, db_session):
+    from app.models import Holding, Snapshot
+
+    headers = auth_header_for("history@example.com")
+    account_id = client.post("/accounts", json={"name": "RBC", "institution": "RBC", "account_type": "cash"}, headers=headers).json()["id"]
+    assert client.post(f"/accounts/{account_id}/snapshots", json=_SNAPSHOT, headers=headers).status_code == 201
+
+    response = client.delete(f"/accounts/{account_id}", headers=headers)
+
+    assert response.status_code == 409
+    assert client.get(f"/accounts/{account_id}", headers=headers).status_code == 200
+    db_session.expire_all()
+    assert db_session.query(Snapshot).filter(Snapshot.account_id == account_id).count() == 1
+    assert db_session.query(Holding).count() == 1
+    assert client.get("/dashboard?currency=USD", headers=headers).json()["net_worth"] == 100.0
+
+
+def test_delete_account_without_snapshots_is_204(client, auth_header_for):
+    headers = auth_header_for("mistake@example.com")
+    account_id = client.post("/accounts", json={"name": "Oops", "institution": "RBC", "account_type": "cash"}, headers=headers).json()["id"]
+
+    assert client.delete(f"/accounts/{account_id}", headers=headers).status_code == 204
+    assert client.get(f"/accounts/{account_id}", headers=headers).status_code == 404
+
+
+def test_patch_account_is_a_partial_update(client, auth_header_for):
+    headers = auth_header_for("partial@example.com")
+    created = client.post("/accounts", json={"name": "Old Name", "institution": "RBC", "account_type": "rrsp"}, headers=headers).json()
+
+    response = client.patch(f"/accounts/{created['id']}", json={"name": "New Name"}, headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "New Name"
+    assert body["institution"] == "RBC"
+    assert body["account_type"] == "rrsp"
+
+    # An empty patch changes nothing; an explicit null is rejected.
+    assert client.patch(f"/accounts/{created['id']}", json={}, headers=headers).json()["name"] == "New Name"
+    assert client.patch(f"/accounts/{created['id']}", json={"institution": None}, headers=headers).status_code == 422
+    assert client.get(f"/accounts/{created['id']}", headers=headers).json()["institution"] == "RBC"

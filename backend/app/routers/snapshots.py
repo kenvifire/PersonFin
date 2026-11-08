@@ -1,7 +1,7 @@
 """HTTP layer for snapshot creation.
 
 Thin by design: confirms the account belongs to the current user (reusing
-the same ownership check as `routers.accounts`), then delegates
+the shared ownership check in `routers._ownership`), then delegates
 everything else to `services.snapshots.create_snapshot`. Snapshots are
 immutable — there is deliberately no update/delete route here.
 """
@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.auth.dependencies import get_current_user
 from app.db import get_db
 from app.models import Snapshot, User
-from app.routers.accounts import _get_owned_account_or_404
+from app.routers._ownership import get_owned_account_or_404
 from app.schemas.snapshot import SnapshotIn, SnapshotOut
 from app.services import fx
 from app.services.snapshots import create_snapshot
@@ -28,5 +28,5 @@ def create_snapshot_endpoint(
     db: Session = Depends(get_db),
     fx_provider: fx.FXRateProvider = Depends(fx.get_fx_provider),
 ) -> Snapshot:
-    account = _get_owned_account_or_404(account_id, current_user, db)
+    account = get_owned_account_or_404(account_id, current_user, db)
     return create_snapshot(db, account, payload, fx_provider)
