@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     google_client_id: str
     google_client_secret: str
     fx_api_key: str | None = None
+    # Local disk only — not a secret, just a path. Screenshots never leave
+    # the server except for the one vision-extraction API call.
+    upload_dir: str = "./data/uploads"
 
     @field_validator("database_url")
     @classmethod

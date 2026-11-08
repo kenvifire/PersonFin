@@ -23,6 +23,7 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 import app.models  # noqa: E402,F401 — registers all model tables on Base.metadata
 from app.db import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
+from app.services import image_storage  # noqa: E402
 from app.services.fx import FXRateUnavailable, get_fx_provider  # noqa: E402
 
 
@@ -82,7 +83,21 @@ def db_session():
 
 
 @pytest.fixture()
-def client(db_session):
+def upload_base_dir(tmp_path) -> str:
+    """An isolated upload directory, unique per test, so uploads never
+    write into the real repo tree. Overrides
+    `image_storage.get_upload_base_dir` for the rest of the test — the
+    `client` fixture depends on this fixture so that override is always
+    in place for it, and any test can also request this fixture
+    directly to inspect the filesystem (e.g. to confirm a file was
+    actually deleted on discard)."""
+    base_dir = str(tmp_path / "uploads")
+    app.dependency_overrides[image_storage.get_upload_base_dir] = lambda: base_dir
+    return base_dir
+
+
+@pytest.fixture()
+def client(db_session, upload_base_dir):
     """A FastAPI TestClient whose `get_db` dependency is overridden to use
     the same in-memory `db_session`, so assertions can inspect rows created
     through API calls directly."""

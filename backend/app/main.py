@@ -6,8 +6,9 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.routers import accounts, auth, dashboard, snapshots, targets, todos
+from app.routers import accounts, auth, dashboard, snapshots, targets, todos, uploads
 from app.services.fx import FXRateUnavailable
+from app.services.image_storage import UnsupportedUploadError
 
 FX_UNAVAILABLE_DETAIL = "Exchange rate temporarily unavailable, try again shortly"
 
@@ -19,6 +20,7 @@ app.include_router(snapshots.router)
 app.include_router(dashboard.router)
 app.include_router(targets.router)
 app.include_router(todos.router)
+app.include_router(uploads.router)
 
 
 @app.exception_handler(FXRateUnavailable)
@@ -28,6 +30,16 @@ async def fx_rate_unavailable_handler(request: Request, exc: FXRateUnavailable) 
     return JSONResponse(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         content={"detail": FX_UNAVAILABLE_DETAIL},
+    )
+
+
+@app.exception_handler(UnsupportedUploadError)
+async def unsupported_upload_handler(request: Request, exc: UnsupportedUploadError) -> JSONResponse:
+    """A bad MIME type or oversized file is a client error, not a bug:
+    surface it as 422 with a message explaining which check failed."""
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": str(exc)},
     )
 
 

@@ -10,6 +10,7 @@ from app.models.holding import Holding
 from app.models.snapshot import Snapshot
 from app.models.target import AllocationTarget
 from app.models.todo import Todo
+from app.models.upload import Upload
 from app.models.user import User
 
 __all__ = [
@@ -18,5 +19,6 @@ __all__ = [
     "Holding",
     "Snapshot",
     "Todo",
+    "Upload",
     "User",
 ]
