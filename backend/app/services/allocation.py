@@ -37,29 +37,40 @@ DRIFT_THRESHOLD_PCT = 5.0
 
 
 def get_or_create_targets(db: Session, user_id: int) -> list[AllocationTarget]:
-    """Return a user's allocation targets, seeding `DEFAULT_TARGETS`
-    (all `is_user_set=False`) on their first call. Subsequent calls
-    return the existing rows untouched."""
+    """Return a user's allocation targets, seeding any `DEFAULT_TARGETS`
+    asset classes the user doesn't already have a row for (all seeded
+    rows are `is_user_set=False`). This is keyed per asset class, not
+    "any row exists for this user" — a user can reach this with a
+    partial set of rows (e.g. `PUT /targets/{asset_class}` creating a
+    single row before `GET /targets` is ever called), and the missing
+    asset classes still need backfilling in that case. Existing rows,
+    user-set or not, are never modified."""
     existing = (
         db.query(AllocationTarget).filter(AllocationTarget.user_id == user_id).all()
     )
-    if existing:
+    existing_asset_classes = {target.asset_class for target in existing}
+    missing_asset_classes = [
+        asset_class
+        for asset_class in DEFAULT_TARGETS
+        if asset_class not in existing_asset_classes
+    ]
+    if not missing_asset_classes:
         return existing
 
-    targets = [
+    new_targets = [
         AllocationTarget(
             user_id=user_id,
             asset_class=asset_class,
-            target_pct=target_pct,
+            target_pct=DEFAULT_TARGETS[asset_class],
             is_user_set=False,
         )
-        for asset_class, target_pct in DEFAULT_TARGETS.items()
+        for asset_class in missing_asset_classes
     ]
-    db.add_all(targets)
+    db.add_all(new_targets)
     db.commit()
-    for target in targets:
+    for target in new_targets:
         db.refresh(target)
-    return targets
+    return existing + new_targets
 
 
 def compute_drift(
