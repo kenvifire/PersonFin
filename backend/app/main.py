@@ -4,6 +4,7 @@ from typing import Any
 from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.routers import accounts, auth, dashboard, insights, snapshots, targets, todos, uploads
@@ -13,6 +14,16 @@ from app.services.image_storage import UnsupportedUploadError
 FX_UNAVAILABLE_DETAIL = "Exchange rate temporarily unavailable, try again shortly"
 
 app = FastAPI(title="PersonFin")
+
+# Local dev only: the Flutter web dev server runs on a random localhost port
+# and calls this API cross-origin. Production serves both through one nginx
+# origin, so no CORS header is needed there.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"http://localhost:\d+",
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(auth.router)
 app.include_router(accounts.router)
