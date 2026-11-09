@@ -147,6 +147,41 @@ manual to-do to go fix it themselves.
   questioned extraction can be re-checked against the source later. It is
   never sent anywhere beyond the one extraction API call.
 
+## Frontend UX (decided during Plan 4 brainstorming)
+
+The user's day-to-day usage is mostly from a phone browser, opportunistically
+(snap one account screenshot whenever they happen to check it, not a batch
+session), so the Flutter web app is designed mobile-first; desktop gets the
+same screens with more breathing room, not a different layout.
+
+- **Navigation:** a bottom tab bar with two tabs — Dashboard and
+  Insights/To-dos. (The user's own call was to leave this to the builder;
+  bottom tabs over a hamburger menu is the builder's choice, made for
+  mobile thumb-reach.)
+- **Dashboard (landing screen):** total net worth is the hero number,
+  rolled up to the user's chosen display currency, with a small
+  month-over-month delta underneath. Below it: a trend sparkline (tap to
+  expand to full history), a drift alert banner that only appears when an
+  allocation target is off (tapping it jumps to Insights/To-dos), and a
+  breakdown list by country. A camera FAB in the bottom-right is the
+  primary action — tap it to pick/snap a screenshot and start the upload
+  flow immediately.
+- **Upload → review flow:** picking a screenshot goes straight into an
+  "extracting" state (short spinner, no separate upload confirmation
+  step), then lands on an editable review screen — account, balance,
+  currency, asset class, all pre-filled from the vision extraction and
+  editable before saving. This is the required extraction-review step
+  from the Key Decisions above, surfaced as the user asked: confirmed
+  right away, not batched for later. Confirm and Discard are both always
+  available; if extraction fails, the same screen appears with empty
+  fields instead of pre-filled ones.
+- **Insights/To-dos screen:** one screen combining allocation-vs-target
+  bars (actual vs. target per asset class, drift visually flagged), the
+  DeepSeek narrative text above those bars, and the manual to-do list
+  (checkable items, add/complete) below.
+- **Login:** a plain centered screen — app name and a single "Sign in
+  with Google" button. Nothing else; settled without further discussion.
+
 ## What's left to the builder
 
 - Exact FastAPI project layout, Postgres schema/migrations tooling
@@ -162,8 +197,8 @@ manual to-do to go fix it themselves.
   user (e.g. emergency-fund-in-cash rule of thumb, max single-asset
   concentration) — reasonable personal-finance defaults, not something
   the user dictated.
-- Flutter app structure, screen layout, and component choices beyond "web
-  app with a dashboard, upload flow, and a to-do list."
+- Flutter visual styling (colors, typography, spacing) and component-level
+  implementation details beyond the screen content decided above.
 - Exact account-matching heuristic (which extracted fields to compare,
   confidence threshold for proposing a match vs. just prompting the user
   to pick/create).
