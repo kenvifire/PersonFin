@@ -39,30 +39,31 @@ class ApiClient {
 
   Future<dynamic> get(String path, {Map<String, String>? query}) {
     final uri = _buildUri(path, query: query);
-    return _send(() => httpClient.get(uri, headers: _headers()));
+    final headers = _headers();
+    return _send(() => httpClient.get(uri, headers: headers));
   }
 
   Future<dynamic> post(String path, {Object? body}) {
     final uri = _buildUri(path);
-    return _send(() => httpClient.post(
-          uri,
-          headers: _headers(jsonBody: body != null),
-          body: body != null ? jsonEncode(body) : null,
-        ));
+    final headers = _headers(jsonBody: body != null);
+    // Encode the body before entering _send's try block: a non-encodable
+    // body is a caller bug, not a network failure, and must propagate as
+    // itself rather than be reported as ApiException(0, ...).
+    final encodedBody = body != null ? jsonEncode(body) : null;
+    return _send(() => httpClient.post(uri, headers: headers, body: encodedBody));
   }
 
   Future<dynamic> patch(String path, {Object? body}) {
     final uri = _buildUri(path);
-    return _send(() => httpClient.patch(
-          uri,
-          headers: _headers(jsonBody: body != null),
-          body: body != null ? jsonEncode(body) : null,
-        ));
+    final headers = _headers(jsonBody: body != null);
+    final encodedBody = body != null ? jsonEncode(body) : null;
+    return _send(() => httpClient.patch(uri, headers: headers, body: encodedBody));
   }
 
   Future<dynamic> delete(String path) {
     final uri = _buildUri(path);
-    return _send(() => httpClient.delete(uri, headers: _headers()));
+    final headers = _headers();
+    return _send(() => httpClient.delete(uri, headers: headers));
   }
 
   Future<dynamic> postMultipart(
@@ -73,15 +74,18 @@ class ApiClient {
     required String contentType,
   }) {
     final uri = _buildUri(path);
+    // Build the request and multipart file before entering _send's try
+    // block: an invalid content-type string or other construction failure
+    // is a caller bug, not a network failure, and must propagate as itself.
+    final request = http.MultipartRequest('POST', uri)
+      ..headers.addAll(_headers())
+      ..files.add(http.MultipartFile.fromBytes(
+        fieldName,
+        bytes,
+        filename: filename,
+        contentType: MediaType.parse(contentType),
+      ));
     return _send(() async {
-      final request = http.MultipartRequest('POST', uri)
-        ..headers.addAll(_headers())
-        ..files.add(http.MultipartFile.fromBytes(
-          fieldName,
-          bytes,
-          filename: filename,
-          contentType: MediaType.parse(contentType),
-        ));
       final streamedResponse = await httpClient.send(request);
       return http.Response.fromStream(streamedResponse);
     });

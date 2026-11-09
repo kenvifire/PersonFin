@@ -85,6 +85,62 @@ void main() {
       expect(result, {'ok': true});
     });
 
+    test(
+        'post() lets a body-encoding error propagate as itself, not as ApiException(0, ...)',
+        () async {
+      var handlerCalled = false;
+      final mockClient = MockClient((request) async {
+        handlerCalled = true;
+        return http.Response(jsonEncode({}), 200);
+      });
+      final client = ApiClient(
+        baseUrl: 'https://api.example.com',
+        httpClient: mockClient,
+        getToken: () => null,
+        onUnauthorized: () {},
+      );
+
+      // A closure (not a Function literal reference) is not JSON-encodable,
+      // so jsonEncode throws before any HTTP call is made. That is a caller
+      // bug, not a network failure, so it must surface as itself.
+      expect(
+        () => client.post('/things', body: {'fn': () {}}),
+        throwsA(isA<JsonUnsupportedObjectError>()),
+      );
+      expect(handlerCalled, isFalse);
+    });
+
+    test(
+        'postMultipart() lets an invalid content-type string propagate as itself, not as ApiException(0, ...)',
+        () async {
+      var handlerCalled = false;
+      final mockClient = MockClient((request) async {
+        handlerCalled = true;
+        return http.Response(jsonEncode({}), 200);
+      });
+      final client = ApiClient(
+        baseUrl: 'https://api.example.com',
+        httpClient: mockClient,
+        getToken: () => null,
+        onUnauthorized: () {},
+      );
+
+      // "not-a-valid-media-type" has no "/" separator, so MediaType.parse
+      // throws before any HTTP call is made. That is a caller bug, not a
+      // network failure, so it must surface as itself.
+      expect(
+        () => client.postMultipart(
+          '/uploads',
+          bytes: utf8.encode('data'),
+          filename: 'f.png',
+          fieldName: 'file',
+          contentType: 'not-a-valid-media-type',
+        ),
+        throwsA(isA<FormatException>()),
+      );
+      expect(handlerCalled, isFalse);
+    });
+
     test('delete() returns null on 204 with empty body', () async {
       final mockClient = MockClient((request) async {
         return http.Response('', 204);
