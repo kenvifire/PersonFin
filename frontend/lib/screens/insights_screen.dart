@@ -6,6 +6,7 @@ import '../providers/dashboard_provider.dart';
 import '../providers/insights_provider.dart';
 import '../providers/todos_provider.dart';
 import '../widgets/allocation_bar.dart';
+import '../widgets/sign_out_button.dart';
 import '../widgets/todo_list_tile.dart';
 
 /// The app's second tab: editable allocation targets, the DeepSeek
@@ -81,7 +82,10 @@ class _InsightsScreenState extends State<InsightsScreen> {
     final todosProvider = context.watch<TodosProvider>();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Insights')),
+      appBar: AppBar(
+        title: const Text('Insights'),
+        actions: const [SignOutButton(), SizedBox(width: 8)],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [

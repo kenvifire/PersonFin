@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../widgets/sign_out_button.dart';
+
 /// The authenticated-app shell: a bottom tab bar (Dashboard, Insights)
 /// wrapping whichever branch screen [child] is. Used as the builder for the
 /// `ShellRoute` in [buildRouter].
+///
+/// Each tab screen owns its `AppBar`; both include a [SignOutButton].
 class HomeShell extends StatelessWidget {
   final Widget child;
 

@@ -22,6 +22,7 @@ import 'package:personfin/models/drift_flag.dart';
 import 'package:personfin/models/insights.dart';
 import 'package:personfin/models/todo.dart';
 import 'package:personfin/models/user.dart';
+import 'package:personfin/providers/dashboard_provider.dart';
 import 'package:personfin/providers/upload_flow_provider.dart';
 import 'package:personfin/screens/dashboard_screen.dart';
 import 'package:personfin/screens/insights_screen.dart';
@@ -242,8 +243,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Narrative for token-alice'), findsOneWidget);
 
-    harness.authService.logout();
+    // Sign out through the UI (the app-bar action on the Insights tab).
+    await tester.tap(find.byTooltip('Sign out'));
     await tester.pumpAndSettle();
+    expect(harness.authService.isAuthenticated, isFalse);
     expect(find.text('Sign in with Google'), findsOneWidget);
 
     // Bob signs in, with the backend holding his responses so the frames
@@ -284,6 +287,31 @@ void main() {
     expect(find.text('Todo for token-bob'), findsOneWidget);
     expect(find.text('Narrative for token-alice'), findsNothing);
     expect(find.text('Todo for token-alice'), findsNothing);
+  });
+
+  testWidgets(
+      "the dashboard's Sign out action logs out, returns to /login, and clears the "
+      "session's data", (tester) async {
+    final harness = await Harness.create();
+    await tester.pumpWidget(harness.app);
+    await tester.pumpAndSettle();
+    await harness.signInAs(tester, 'google-alice');
+    expect(heroText('1,111'), findsOneWidget);
+    final dashboardProvider = Provider.of<DashboardProvider>(
+      tester.element(find.byType(DashboardScreen)),
+      listen: false,
+    );
+    expect(dashboardProvider.data, isNotNull);
+
+    await tester.tap(find.byTooltip('Sign out'));
+    await tester.pumpAndSettle();
+
+    expect(harness.authService.isAuthenticated, isFalse);
+    expect(harness.authService.token, isNull);
+    expect(find.text('Sign in with Google'), findsOneWidget);
+    expect(find.byType(DashboardScreen), findsNothing);
+    expect(dashboardProvider.data, isNull);
+    expect(dashboardProvider.state, LoadState.loading);
   });
 
   testWidgets('a second visit to /upload starts a fresh upload flow', (tester) async {

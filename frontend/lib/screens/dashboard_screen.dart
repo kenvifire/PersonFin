@@ -8,6 +8,7 @@ import '../widgets/account_breakdown_list.dart';
 import '../widgets/currency_switcher.dart';
 import '../widgets/drift_alert_banner.dart';
 import '../widgets/net_worth_hero.dart';
+import '../widgets/sign_out_button.dart';
 import '../widgets/trend_sparkline.dart';
 
 /// The app's landing screen: a hero net-worth figure, a trend sparkline, a
@@ -25,6 +26,7 @@ class DashboardScreen extends StatelessWidget {
         title: const Text('Dashboard'),
         actions: [
           CurrencySwitcher(currency: provider.currency, onChanged: provider.setCurrency),
+          const SignOutButton(),
           const SizedBox(width: 8),
         ],
       ),
