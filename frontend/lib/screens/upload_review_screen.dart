@@ -391,6 +391,18 @@ class _UploadReviewScreenState extends State<UploadReviewScreen> {
   }
 
   Future<void> _onConfirm(UploadFlowProvider provider) async {
+    await _confirm(provider);
+    // A non-409 failure returns the provider to `ready` (form intact) with
+    // errorMessage set; surface it so the user knows to fix and retry.
+    if (!mounted) return;
+    if (provider.state == UploadFlowState.ready && provider.errorMessage != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save: ${provider.errorMessage}')),
+      );
+    }
+  }
+
+  Future<void> _confirm(UploadFlowProvider provider) async {
     if (_useNewAccount) {
       await provider.confirm(
         accountId: null,

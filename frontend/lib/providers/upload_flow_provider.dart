@@ -124,11 +124,18 @@ class UploadFlowProvider extends ChangeNotifier {
   /// Confirms the upload into a real snapshot with the current
   /// [holdings]/[takenAt], under either an existing account ([accountId])
   /// or a brand-new one ([newAccount]).
+  ///
+  /// A 409 lands on [UploadFlowState.alreadyFinalized]. Any other failure
+  /// (422 bad holding data, 503 FX outage, network error) returns to
+  /// [UploadFlowState.ready] with [holdings] untouched and [errorMessage]
+  /// set, so the user can fix the problem and retry Confirm without
+  /// re-entering the form.
   Future<void> confirm({
     required int? accountId,
     required ({String name, String institution, String accountType})? newAccount,
   }) async {
     state = UploadFlowState.confirming;
+    errorMessage = null;
     notifyListeners();
     try {
       await _uploadsApi.confirmUpload(
@@ -144,7 +151,7 @@ class UploadFlowProvider extends ChangeNotifier {
       // Review Focus: confirm/discard race — a 409 here means another
       // in-flight request already confirmed or discarded this upload, a
       // distinct outcome from a generic failure.
-      state = e.statusCode == 409 ? UploadFlowState.alreadyFinalized : UploadFlowState.error;
+      state = e.statusCode == 409 ? UploadFlowState.alreadyFinalized : UploadFlowState.ready;
     }
     notifyListeners();
   }

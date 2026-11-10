@@ -391,6 +391,51 @@ void main() {
       expect(provider.state, UploadFlowState.confirmed);
     });
 
+    testWidgets(
+        'a non-409 confirm failure keeps the filled-in form on screen and shows the error in a '
+        'SnackBar; Confirm can be retried', (tester) async {
+      final accountsApi = FakeAccountsApi(accounts: [
+        AccountSummaryLite(id: 5, name: 'Brokerage', institution: 'Big Bank', accountType: 'brokerage'),
+      ]);
+      final uploadsApi = FakeUploadsApi(
+        extractResult: extractedRecord(),
+        confirmError: ApiException(503, 'Exchange rate temporarily unavailable'),
+      );
+      final provider = UploadFlowProvider(uploadsApi: uploadsApi, accountsApi: accountsApi);
+      await provider.startUpload(bytes: [1], filename: 'shot.png', mimeType: 'image/png');
+      await provider.loadAccounts();
+
+      final subject = buildSubject(uploadProvider: provider);
+      await growSurface(tester);
+      await tester.pumpWidget(subject.widget);
+      subject.router.push('/upload');
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.widgetWithText(TextFormField, 'Country'), 'CA');
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Confirm'));
+      await tester.pumpAndSettle();
+
+      expect(provider.state, UploadFlowState.ready);
+      expect(find.widgetWithText(SnackBar, 'Could not save: Exchange rate temporarily unavailable'),
+          findsOneWidget);
+      // Still on the review screen, with the extracted and hand-edited values intact.
+      expect(find.byType(UploadReviewScreen), findsOneWidget);
+      expect(find.text('AAPL'), findsOneWidget);
+      expect(find.widgetWithText(TextFormField, 'CA'), findsOneWidget);
+      expect(find.text('Brokerage'), findsOneWidget);
+      expect(find.text('Discard'), findsOneWidget);
+      final confirmButton =
+          tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'Confirm'));
+      expect(confirmButton.onPressed, isNotNull);
+
+      // Retrying sends the edited holding again.
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Confirm'));
+      await tester.pumpAndSettle();
+      expect(uploadsApi.capturedHoldings!.single.country, 'CA');
+      expect(uploadsApi.capturedAccountId, 5);
+    });
+
     testWidgets('tapping + Add holding appends a blank editable row', (tester) async {
       final uploadsApi = FakeUploadsApi(extractResult: extractedRecord());
       final provider = UploadFlowProvider(uploadsApi: uploadsApi, accountsApi: FakeAccountsApi());

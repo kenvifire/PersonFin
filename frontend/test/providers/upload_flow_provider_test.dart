@@ -278,19 +278,28 @@ void main() {
       expect(provider.errorMessage, 'Upload is already finalized');
     });
 
-    test('confirm surfaces a non-409 ApiException as state=error with errorMessage', () async {
-      final uploadsApi = FakeUploadsApi(
-        extractResult: extractedRecord(),
-        confirmError: ApiException(500, 'Server exploded'),
-      );
-      final provider =
-          UploadFlowProvider(uploadsApi: uploadsApi, accountsApi: FakeAccountsApi());
-      await provider.startUpload(bytes: [1, 2, 3], filename: 'shot.png', mimeType: 'image/png');
+    test('confirm on a non-409 ApiException returns to ready (not error) with holdings intact '
+        'and errorMessage set, so the form can be fixed and retried', () async {
+      for (final error in [
+        ApiException(422, 'value must be >= 0'),
+        ApiException(503, 'Exchange rate temporarily unavailable'),
+        ApiException(0, 'Network error'),
+      ]) {
+        final uploadsApi = FakeUploadsApi(extractResult: extractedRecord(), confirmError: error);
+        final provider =
+            UploadFlowProvider(uploadsApi: uploadsApi, accountsApi: FakeAccountsApi());
+        await provider.startUpload(bytes: [1, 2, 3], filename: 'shot.png', mimeType: 'image/png');
+        provider.holdings.first.label = 'AAPL (edited)';
+        final editedHolding = provider.holdings.first;
 
-      await provider.confirm(accountId: 7, newAccount: null);
+        await provider.confirm(accountId: 7, newAccount: null);
 
-      expect(provider.state, UploadFlowState.error);
-      expect(provider.errorMessage, 'Server exploded');
+        expect(provider.state, UploadFlowState.ready, reason: 'status ${error.statusCode}');
+        expect(provider.errorMessage, error.message);
+        expect(provider.holdings, hasLength(1));
+        expect(identical(provider.holdings.first, editedHolding), isTrue);
+        expect(provider.holdings.first.label, 'AAPL (edited)');
+      }
     });
 
     test('discard calls discardUpload and sets state to confirmed on success', () async {
