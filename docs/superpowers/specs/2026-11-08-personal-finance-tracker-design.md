@@ -182,11 +182,63 @@ same screens with more breathing room, not a different layout.
 - **Login:** a plain centered screen — app name and a single "Sign in
   with Google" button. Nothing else; settled without further discussion.
 
+## Deployment (decided during Plan 5 — no brainstorming requested, these are the builder's own calls)
+
+- **Containers:** Docker Compose with two services — `backend` (FastAPI +
+  Uvicorn) and `db` (Postgres with a named volume for persistence,
+  `depends_on` with a healthcheck gate). No separate frontend container —
+  the Flutter web build is static output, served directly by the VPS's
+  existing host nginx, consistent with the earlier decision that nginx
+  owns TLS and fronts everything.
+- **Path-space split (avoids a real collision):** the Flutter app's own
+  client-side routes (`/login`, `/dashboard`, `/insights`, `/upload`) and
+  several backend API paths (`/dashboard`, `/insights`, …) are literally
+  the same strings. In production (single origin, unlike local dev's
+  CORS-separated ports) this would collide. Fix: nginx proxies
+  `location /api/ { proxy_pass http://127.0.0.1:8000/; }` (stripping the
+  `/api` prefix — the backend's route code needs zero changes) and
+  everything else falls through to the Flutter build with SPA fallback
+  (`try_files $uri $uri/ /index.html;`). The frontend is built with
+  `--dart-define=API_BASE_URL=https://finance.itlubo.com/api`.
+- **Networking:** `backend`/`db` share an internal Compose network;
+  `backend` additionally binds `127.0.0.1:8000:8000` on the host so the
+  host's nginx process (not itself containerized) can reach it. No
+  container port is exposed beyond localhost — nginx is still the only
+  thing the internet reaches, per the existing constraint.
+- **Migrations:** `alembic upgrade head` runs automatically in the
+  backend container's entrypoint, before Uvicorn starts. No separate
+  migration-runner service — simplest reliable choice for a
+  single-operator deployment.
+- **Secrets:** one git-ignored `.env` file on the VPS (DB credentials,
+  Azure OpenAI key, DeepSeek key, Google OAuth client ID/secret, session
+  signing secret), referenced via Compose's `env_file:`. Never committed.
+- **Deploy workflow:** manual and SSH-triggered, no CI/CD pipeline — a
+  single `deploy.sh` script in the repo that does `git pull`, rebuilds
+  the `backend` image, runs `flutter build web` with the production
+  `--dart-define`s, and syncs the build output into the directory the
+  host nginx serves. Matches the spec's existing "no admin console,
+  solo-operator" framing — this is a personal tool, not a team's
+  production service.
+- **Google OAuth (production):** a one-time manual step in Google Cloud
+  Console — create a production OAuth 2.0 Web Client with Authorized
+  JavaScript origin `https://finance.itlubo.com` (the web Google
+  Sign-In flow used by the frontend is origin-based, not a redirect
+  flow, so no redirect URI is needed). This can't be scripted from here;
+  the plan documents the exact steps for the user to follow once.
+- **Backups:** a daily cron job on the VPS running `pg_dump` against the
+  `db` container's volume, written to a local backups directory with
+  simple rotation (delete anything older than N days). No off-VPS backup
+  destination — matches the project's personal/solo scale.
+- **Observability/logging:** no external log aggregation. Uvicorn/FastAPI
+  logs go to stdout, captured by Docker's default `json-file` log driver
+  with size-based rotation configured in Compose. `docker compose logs`
+  is the debugging tool. Revisit only if this genuinely becomes hard to
+  operate.
+
 ## What's left to the builder
 
-- Exact FastAPI project layout, Postgres schema/migrations tooling
-  (e.g. Alembic), and Docker Compose service breakdown (how many
-  containers, networking details).
+- Exact FastAPI project layout and Postgres schema/migrations tooling
+  (e.g. Alembic).
 - Choice of FX-rate data source (any reputable free/low-cost API) and
   crypto price source, and how often rates refresh.
 - Specific Azure OpenAI deployment/model name and DeepSeek model/endpoint
@@ -206,5 +258,3 @@ same screens with more breathing room, not a different layout.
   bond, cash position, or crypto holding gets classified into).
 - Session/token handling details for Google OAuth (library choice, token
   storage/refresh strategy).
-- Observability/logging approach, backup strategy for the Postgres data
-  volume.
