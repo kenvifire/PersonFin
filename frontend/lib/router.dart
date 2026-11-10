@@ -1,20 +1,11 @@
-import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'auth/auth_service.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/home_shell.dart';
+import 'screens/insights_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/upload_review_screen.dart';
-
-// Trivial placeholder. Replaced wholesale by Task 11 (InsightsScreen) at
-// lib/screens/insights_screen.dart.
-class InsightsScreen extends StatelessWidget {
-  const InsightsScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) => const Scaffold(body: Text('TODO'));
-}
 
 /// Builds the app's [GoRouter], gating every route except `/login` behind
 /// [AuthService.isAuthenticated].
