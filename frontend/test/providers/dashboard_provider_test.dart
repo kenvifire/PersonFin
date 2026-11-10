@@ -1,64 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:personfin/api/api_client.dart';
-import 'package:personfin/api/dashboard_api.dart';
-import 'package:personfin/api/targets_api.dart';
-import 'package:personfin/models/dashboard.dart';
-import 'package:personfin/models/drift_flag.dart';
 import 'package:personfin/providers/dashboard_provider.dart';
 
-DashboardData _dashboardFor(String currency) => DashboardData(
-      netWorth: 1000.0,
-      currency: currency,
-      byAssetClass: {'Equity': 1000.0},
-      byCountry: {'CA': 1000.0},
-      accounts: [],
-      trend: [],
-    );
-
-List<DriftFlag> _driftFor(String currency) => [
-      DriftFlag(assetClass: 'Equity', targetPct: 60.0, actualPct: 65.0, deltaPct: 5.0),
-    ];
-
-class FakeDashboardApi implements DashboardApiBase {
-  final DashboardData? fixedData;
-  final Object? error;
-  String? lastRequestedCurrency;
-
-  FakeDashboardApi({this.fixedData, this.error});
-
-  @override
-  Future<DashboardData> getDashboard(String currency) async {
-    lastRequestedCurrency = currency;
-    if (error != null) {
-      throw error!;
-    }
-    return fixedData ?? _dashboardFor(currency);
-  }
-}
-
-class FakeTargetsApi implements TargetsApiBase {
-  final List<DriftFlag>? fixedDrift;
-  final Object? error;
-  String? lastRequestedCurrency;
-
-  FakeTargetsApi({this.fixedDrift, this.error});
-
-  @override
-  Future<List<DriftFlag>> getDrift(String currency) async {
-    lastRequestedCurrency = currency;
-    if (error != null) {
-      throw error!;
-    }
-    return fixedDrift ?? _driftFor(currency);
-  }
-
-  @override
-  Future<List<AllocationTarget>> listTargets() => throw UnimplementedError();
-
-  @override
-  Future<AllocationTarget> updateTarget(String assetClass, double targetPct) =>
-      throw UnimplementedError();
-}
+import '../fakes.dart';
 
 void main() {
   group('DashboardProvider', () {

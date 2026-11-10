@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:personfin/api/auth_api.dart';
 import 'package:personfin/auth/auth_service.dart';
 import 'package:personfin/models/user.dart';
+import 'package:personfin/providers/dashboard_provider.dart';
 import 'package:personfin/router.dart';
+
+import 'fakes.dart';
 
 class FakeAuthApi implements AuthApiBase {
   @override
@@ -25,6 +29,22 @@ Future<AuthService> buildAuthService() async {
 String currentLocation(GoRouter router) =>
     router.routerDelegate.currentConfiguration.uri.toString();
 
+// DashboardScreen (mounted at /dashboard once a test is authenticated)
+// reads DashboardProvider via Provider, so every pump below provides one
+// backed by fakes — these tests exercise routing/redirect behavior, not
+// dashboard content. The provider is pre-loaded (rather than left in its
+// default `loading` state) so DashboardScreen renders static content
+// instead of an indefinitely-animating CircularProgressIndicator, which
+// would otherwise make pumpAndSettle() below time out.
+Future<Widget> wrapWithDashboardProvider(GoRouter router) async {
+  final provider = DashboardProvider(dashboardApi: FakeDashboardApi(), targetsApi: FakeTargetsApi());
+  await provider.load();
+  return ChangeNotifierProvider.value(
+    value: provider,
+    child: MaterialApp.router(routerConfig: router),
+  );
+}
+
 void main() {
   group('buildRouter', () {
     testWidgets(
@@ -33,7 +53,7 @@ void main() {
       final authService = await buildAuthService();
       final router = buildRouter(authService);
 
-      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.pumpWidget(await wrapWithDashboardProvider(router));
       await tester.pumpAndSettle();
 
       router.go('/dashboard');
@@ -49,7 +69,7 @@ void main() {
       await authService.loginWithGoogle('id-token-xyz');
       final router = buildRouter(authService);
 
-      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.pumpWidget(await wrapWithDashboardProvider(router));
       await tester.pumpAndSettle();
 
       router.go('/login');
@@ -75,7 +95,7 @@ void main() {
 
       // The app's default initial location (no explicit path given) is
       // already `/` — assert that lands correctly...
-      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.pumpWidget(await wrapWithDashboardProvider(router));
       await tester.pumpAndSettle();
       expect(currentLocation(router), '/dashboard');
       expect(find.text('Sign in with Google'), findsNothing);
@@ -98,7 +118,7 @@ void main() {
       await authService.loginWithGoogle('id-token-xyz');
       final router = buildRouter(authService);
 
-      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.pumpWidget(await wrapWithDashboardProvider(router));
       await tester.pumpAndSettle();
       router.go('/dashboard');
       await tester.pumpAndSettle();

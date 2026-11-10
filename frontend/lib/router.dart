@@ -2,20 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'auth/auth_service.dart';
+import 'screens/dashboard_screen.dart';
 import 'screens/home_shell.dart';
 import 'screens/login_screen.dart';
 
-// Trivial placeholders. Replaced wholesale by Task 7 (DashboardScreen),
-// Task 9 (UploadReviewScreen), and Task 11 (InsightsScreen) at
-// lib/screens/dashboard_screen.dart, lib/screens/upload_review_screen.dart,
-// and lib/screens/insights_screen.dart respectively.
-class DashboardScreen extends StatelessWidget {
-  const DashboardScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) => const Scaffold(body: Text('TODO'));
-}
-
+// Trivial placeholders. Replaced wholesale by Task 9 (UploadReviewScreen)
+// and Task 11 (InsightsScreen) at lib/screens/upload_review_screen.dart and
+// lib/screens/insights_screen.dart respectively.
 class InsightsScreen extends StatelessWidget {
   const InsightsScreen({super.key});
 
