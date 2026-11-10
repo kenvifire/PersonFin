@@ -60,6 +60,13 @@ class ApiClient {
     return _send(() => httpClient.patch(uri, headers: headers, body: encodedBody));
   }
 
+  Future<dynamic> put(String path, {Object? body}) {
+    final uri = _buildUri(path);
+    final headers = _headers(jsonBody: body != null);
+    final encodedBody = body != null ? jsonEncode(body) : null;
+    return _send(() => httpClient.put(uri, headers: headers, body: encodedBody));
+  }
+
   Future<dynamic> delete(String path) {
     final uri = _buildUri(path);
     final headers = _headers();

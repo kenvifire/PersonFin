@@ -64,5 +64,87 @@ void main() {
 
       expect(drift, isEmpty);
     });
+
+    test('listTargets parses a GET /targets list response', () async {
+      http.Request? capturedRequest;
+      final mockClient = MockClient((request) async {
+        capturedRequest = request;
+        return http.Response(
+          jsonEncode([
+            {
+              'id': 1,
+              'asset_class': 'Equity',
+              'target_pct': 60.0,
+              'is_user_set': true,
+              'updated_at': '2026-01-01T00:00:00',
+            },
+            {
+              'id': 2,
+              'asset_class': 'Bond',
+              'target_pct': 40.0,
+              'is_user_set': false,
+              'updated_at': '2026-01-01T00:00:00',
+            },
+          ]),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+      final apiClient = ApiClient(
+        baseUrl: 'https://api.example.com',
+        httpClient: mockClient,
+        getToken: () => null,
+        onUnauthorized: () {},
+      );
+      final targetsApi = TargetsApi(apiClient);
+
+      final targets = await targetsApi.listTargets();
+
+      expect(capturedRequest!.url.path, '/targets');
+      expect(targets, hasLength(2));
+      expect(targets.first.id, 1);
+      expect(targets.first.assetClass, 'Equity');
+      expect(targets.first.targetPct, 60.0);
+      expect(targets.first.isUserSet, isTrue);
+      expect(targets[1].assetClass, 'Bond');
+      expect(targets[1].isUserSet, isFalse);
+    });
+
+    test('updateTarget PUTs target_pct and parses the returned AllocationTarget', () async {
+      http.Request? capturedRequest;
+      Map<String, dynamic>? capturedBody;
+      final mockClient = MockClient((request) async {
+        capturedRequest = request;
+        capturedBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({
+            'id': 1,
+            'asset_class': 'Equity',
+            'target_pct': 65.0,
+            'is_user_set': true,
+            'updated_at': '2026-01-01T00:00:00',
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+      final apiClient = ApiClient(
+        baseUrl: 'https://api.example.com',
+        httpClient: mockClient,
+        getToken: () => null,
+        onUnauthorized: () {},
+      );
+      final targetsApi = TargetsApi(apiClient);
+
+      final target = await targetsApi.updateTarget('Equity', 65.0);
+
+      expect(capturedRequest!.method, 'PUT');
+      expect(capturedRequest!.url.path, '/targets/Equity');
+      expect(capturedBody, {'target_pct': 65.0});
+      expect(target.id, 1);
+      expect(target.assetClass, 'Equity');
+      expect(target.targetPct, 65.0);
+      expect(target.isUserSet, isTrue);
+    });
   });
 }
