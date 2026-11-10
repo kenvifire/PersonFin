@@ -209,6 +209,56 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(confirmButton().onPressed, isNotNull);
+
+      // Isolate the isComplete check: break the holding's completeness
+      // again while the account stays selected. Deleting the isComplete
+      // check from _isConfirmEnabled wouldn't change any outcome above
+      // (the "no account" cases were already disabled for an unrelated
+      // reason) — this is the one case only that check can explain.
+      await tester.enterText(find.widgetWithText(TextFormField, 'Country'), '');
+      await tester.pumpAndSettle();
+      expect(confirmButton().onPressed, isNull,
+          reason: 'holding incomplete again even though an account is selected');
+    });
+
+    testWidgets('Confirm button stays disabled when holdings becomes empty, even with an '
+        'account selected', (tester) async {
+      final accountsApi = FakeAccountsApi(accounts: [
+        AccountSummaryLite(id: 9, name: 'Savings', institution: 'Big Bank', accountType: 'bank'),
+      ]);
+      final uploadsApi = FakeUploadsApi(extractResult: extractedRecord());
+      final provider = UploadFlowProvider(uploadsApi: uploadsApi, accountsApi: accountsApi);
+      await provider.startUpload(bytes: [1], filename: 'shot.png', mimeType: 'image/png');
+      // extractedRecord()'s single holding is already complete; drop the
+      // suggested account so the dropdown starts unselected and this test
+      // controls account-selection itself.
+      provider.suggestedAccountId = null;
+      await provider.loadAccounts();
+
+      final subject = buildSubject(uploadProvider: provider);
+      await growSurface(tester);
+      await tester.pumpWidget(subject.widget);
+      subject.router.push('/upload');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(DropdownButtonFormField<int>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Savings').last);
+      await tester.pumpAndSettle();
+
+      ElevatedButton confirmButton() =>
+          tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'Confirm'));
+      expect(confirmButton().onPressed, isNotNull);
+
+      // Isolate the holdings.isNotEmpty check: remove the only holding
+      // while the account selection is untouched. Only that check can
+      // explain the button going back to disabled here.
+      await tester.tap(find.text('Remove'));
+      await tester.pumpAndSettle();
+
+      expect(provider.holdings, isEmpty);
+      expect(confirmButton().onPressed, isNull,
+          reason: 'no holdings left to confirm, even though an account is selected');
     });
 
     testWidgets('tapping Confirm calls provider.confirm with the selected account id',
@@ -239,6 +289,52 @@ void main() {
       expect(provider.state, UploadFlowState.confirmed);
       expect(dashboardApi.callCount, 1);
       expect(currentLocation(subject.router), '/dashboard');
+    });
+
+    testWidgets(
+        'tapping Confirm after filling in "+ New account" calls provider.confirm with '
+        'newAccount set and accountId null', (tester) async {
+      final uploadsApi = FakeUploadsApi(extractResult: extractedRecord());
+      final provider = UploadFlowProvider(uploadsApi: uploadsApi, accountsApi: FakeAccountsApi());
+      await provider.startUpload(bytes: [1], filename: 'shot.png', mimeType: 'image/png');
+      // extractedRecord()'s single holding is already complete; no
+      // suggested/existing account exists, so the only path to an enabled
+      // Confirm button is through "+ New account".
+      provider.suggestedAccountId = null;
+      await provider.loadAccounts();
+
+      final subject = buildSubject(uploadProvider: provider);
+      await growSurface(tester);
+      await tester.pumpWidget(subject.widget);
+      subject.router.push('/upload');
+      await tester.pumpAndSettle();
+
+      ElevatedButton confirmButton() =>
+          tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'Confirm'));
+      expect(confirmButton().onPressed, isNull, reason: 'no account chosen yet');
+
+      // Toggle to "+ New account" (mutually exclusive with the dropdown)
+      // and fill in its fields.
+      await tester.tap(find.text('+ New account'));
+      await tester.pumpAndSettle();
+      expect(find.byType(DropdownButtonFormField<int>), findsNothing);
+
+      await tester.enterText(find.widgetWithText(TextFormField, 'Account name'), 'New Brokerage');
+      await tester.enterText(find.widgetWithText(TextFormField, 'Institution'), 'New Bank');
+      await tester.enterText(find.widgetWithText(TextFormField, 'Account type'), 'brokerage');
+      await tester.pumpAndSettle();
+
+      expect(confirmButton().onPressed, isNotNull);
+
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Confirm'));
+      await tester.pumpAndSettle();
+
+      expect(uploadsApi.capturedAccountId, isNull);
+      expect(
+        uploadsApi.capturedNewAccount,
+        (name: 'New Brokerage', institution: 'New Bank', accountType: 'brokerage'),
+      );
+      expect(provider.state, UploadFlowState.confirmed);
     });
 
     testWidgets('tapping + Add holding appends a blank editable row', (tester) async {
