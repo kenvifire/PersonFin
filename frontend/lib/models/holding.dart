@@ -31,14 +31,26 @@ class EditableHolding {
     this.country = '',
   });
 
+  /// Seeds a row from the vision extraction's guesses.
+  ///
+  /// The asset-class and currency guesses are free text from the vision
+  /// model, but the review form edits them with dropdowns over the fixed
+  /// [assetClasses]/[holdingCurrencies] lists. Each guess is trimmed and
+  /// case-folded to match its list (`' USD '`/`'usd'` -> `'USD'`,
+  /// `'Equity'` -> `'equity'`); a guess that still isn't in the list
+  /// (`'Stocks'`, `'ETF'`) becomes `null`, so the user is prompted to pick
+  /// a value instead of carrying an invalid one into the confirm request.
   factory EditableHolding.fromDraft(DraftHolding draft) => EditableHolding(
         label: draft.label,
-        assetClass: draft.assetClassGuess,
+        assetClass: _normalizeGuess(draft.assetClassGuess?.trim().toLowerCase(), assetClasses),
         quantity: draft.quantity,
         value: draft.value,
-        currency: draft.currencyGuess,
+        currency: _normalizeGuess(draft.currencyGuess?.trim().toUpperCase(), holdingCurrencies),
         country: draft.countryGuess ?? '',
       );
+
+  static String? _normalizeGuess(String? normalized, List<String> allowed) =>
+      normalized != null && allowed.contains(normalized) ? normalized : null;
 
   /// Whether every field `toHoldingIn` requires is present and valid.
   bool get isComplete =>

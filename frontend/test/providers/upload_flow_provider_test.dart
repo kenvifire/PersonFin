@@ -155,6 +155,49 @@ void main() {
       expect(holding.country, '');
       expect(holding.isComplete, isFalse);
     });
+
+    test('fromDraft case-folds and trims an asset-class/currency guess that matches the fixed '
+        'lists once normalized', () {
+      final holding = EditableHolding.fromDraft(DraftHolding(
+        label: 'AAPL',
+        assetClassGuess: ' Equity ',
+        quantity: null,
+        value: 100.0,
+        currencyGuess: 'usd',
+        countryGuess: 'US',
+      ));
+
+      expect(holding.assetClass, 'equity');
+      expect(holding.currency, 'USD');
+      expect(holding.isComplete, isTrue);
+    });
+
+    test('fromDraft nulls out an asset-class/currency guess that is not in the fixed lists even '
+        'after normalizing', () {
+      final holding = EditableHolding.fromDraft(DraftHolding(
+        label: 'VTI',
+        assetClassGuess: 'Stocks',
+        quantity: null,
+        value: 100.0,
+        currencyGuess: 'US Dollar',
+        countryGuess: 'US',
+      ));
+
+      expect(holding.assetClass, isNull);
+      expect(holding.currency, isNull);
+      expect(holding.isComplete, isFalse);
+
+      final etf = EditableHolding.fromDraft(DraftHolding(
+        label: 'XEQT',
+        assetClassGuess: 'ETF',
+        quantity: null,
+        value: 100.0,
+        currencyGuess: 'crypto',
+        countryGuess: 'CA',
+      ));
+      expect(etf.assetClass, isNull);
+      expect(etf.currency, 'CRYPTO');
+    });
   });
 
   group('UploadFlowProvider', () {

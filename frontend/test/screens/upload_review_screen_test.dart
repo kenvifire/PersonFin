@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:personfin/api/api_client.dart';
 import 'package:personfin/api/uploads_api.dart';
 import 'package:personfin/models/account.dart';
+import 'package:personfin/models/extraction.dart';
 import 'package:personfin/models/holding.dart';
 import 'package:personfin/models/upload.dart';
 import 'package:personfin/providers/dashboard_provider.dart';
@@ -167,6 +168,59 @@ void main() {
       expect(find.text('Vision service could not read the image'), findsOneWidget);
       expect(find.text('+ Add holding'), findsOneWidget);
       expect(find.text('AAPL'), findsNothing);
+      final confirmButton =
+          tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'Confirm'));
+      expect(confirmButton.onPressed, isNull);
+    });
+
+    testWidgets(
+        'renders the form (no dropdown assertion) when the vision guesses are outside the fixed '
+        'asset-class/currency lists, leaving those dropdowns unselected and Confirm disabled',
+        (tester) async {
+      final record = UploadRecord(
+        id: 1,
+        status: 'extracted',
+        extractedPayload: ExtractionResult(
+          institution: 'Big Bank',
+          accountLabel: 'Investing',
+          accountTypeGuess: 'brokerage',
+          takenAtGuess: DateTime(2026, 11, 1),
+          holdings: [
+            DraftHolding(
+              label: 'VTI',
+              assetClassGuess: 'Stocks',
+              quantity: 1,
+              value: 100.0,
+              currencyGuess: 'usd',
+              countryGuess: 'US',
+            ),
+          ],
+        ),
+        extractionError: null,
+        suggestedAccountId: 5,
+      );
+      final accountsApi = FakeAccountsApi(accounts: [
+        AccountSummaryLite(id: 5, name: 'Brokerage', institution: 'Big Bank', accountType: 'brokerage'),
+      ]);
+      final provider = UploadFlowProvider(
+        uploadsApi: FakeUploadsApi(extractResult: record),
+        accountsApi: accountsApi,
+      );
+      await provider.startUpload(bytes: [1], filename: 'shot.png', mimeType: 'image/png');
+      await provider.loadAccounts();
+
+      final subject = buildSubject(uploadProvider: provider);
+      await growSurface(tester);
+      await tester.pumpWidget(subject.widget);
+      subject.router.push('/upload');
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('VTI'), findsOneWidget);
+      // 'usd' normalized to a valid, selected 'USD'; 'Stocks' left unselected.
+      expect(find.text('USD'), findsOneWidget);
+      expect(find.text('Stocks'), findsNothing);
+      expect(provider.holdings.single.assetClass, isNull);
       final confirmButton =
           tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'Confirm'));
       expect(confirmButton.onPressed, isNull);
