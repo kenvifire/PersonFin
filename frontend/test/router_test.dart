@@ -60,6 +60,34 @@ void main() {
     });
 
     testWidgets(
+        'an authenticated user whose initial location is / lands on /dashboard',
+        (tester) async {
+      // Regression: go_router's default initial location is `/` (no route
+      // defines it — only /login, /dashboard, /insights, /upload exist),
+      // which is exactly what a normal return visit to the app's domain
+      // loads. Before the `atRoot` branch, an authenticated user landing at
+      // `/` hit neither `redirect` branch, so no redirect happened and
+      // go_router failed to match `/` against any route — an error page
+      // instead of the dashboard.
+      final authService = await buildAuthService();
+      await authService.loginWithGoogle('id-token-xyz');
+      final router = buildRouter(authService);
+
+      // The app's default initial location (no explicit path given) is
+      // already `/` — assert that lands correctly...
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.pumpAndSettle();
+      expect(currentLocation(router), '/dashboard');
+      expect(find.text('Sign in with Google'), findsNothing);
+
+      // ...and assert the same explicitly, independent of platform default
+      // route behavior, by navigating to `/` directly.
+      router.go('/');
+      await tester.pumpAndSettle();
+      expect(currentLocation(router), '/dashboard');
+    });
+
+    testWidgets(
         'calling authService.logout() while on /dashboard redirects to /login',
         (tester) async {
       // Review Focus: a 401 anywhere in the app triggers AuthService.logout()

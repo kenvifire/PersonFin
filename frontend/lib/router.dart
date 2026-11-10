@@ -43,8 +43,15 @@ GoRouter buildRouter(AuthService authService) => GoRouter(
       redirect: (context, state) {
         final loggedIn = authService.isAuthenticated;
         final loggingIn = state.matchedLocation == '/login';
+        // go_router's default initial location is `/` (no route defines
+        // it), which is exactly what a normal return visit to the app's
+        // domain loads. Without this, an authenticated user landing there
+        // hits neither branch below, redirect() returns null, and go_router
+        // fails to match `/` against any route — an error page instead of
+        // the dashboard.
+        final atRoot = state.matchedLocation == '/';
         if (!loggedIn && !loggingIn) return '/login';
-        if (loggedIn && loggingIn) return '/dashboard';
+        if (loggedIn && (loggingIn || atRoot)) return '/dashboard';
         return null;
       },
       routes: [
