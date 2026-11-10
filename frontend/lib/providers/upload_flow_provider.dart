@@ -21,6 +21,11 @@ enum UploadFlowState {
 /// Drives the upload -> review -> confirm/discard flow as a state
 /// machine, from picking a screenshot through to a finalized snapshot.
 ///
+/// Scoped to a single visit to `/upload`: `buildRouter` creates a fresh
+/// instance (starting in [UploadFlowState.picking]) every time that route
+/// is pushed, so a previous upload's terminal state never leaks into the
+/// next one.
+///
 /// Extraction failure (the vision call couldn't read the screenshot) is a
 /// normal, successful HTTP response whose *business* result is a
 /// failure: [startUpload] lands on [UploadFlowState.failed], not
@@ -48,6 +53,24 @@ class UploadFlowProvider extends ChangeNotifier {
   List<AccountSummaryLite> accounts = [];
   String? errorMessage;
   int? _uploadId;
+  bool _disposed = false;
+
+  // One instance is created per visit to `/upload` (see `buildRouter`) and
+  // disposed when that route is popped — possibly while an upload/extract/
+  // confirm call is still in flight (back button, or a 401 sign-out
+  // redirecting to /login). Notifying after dispose would throw, so late
+  // completions are silently dropped instead.
+  @override
+  void notifyListeners() {
+    if (_disposed) return;
+    super.notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
 
   Future<void> loadAccounts() async {
     accounts = await _accountsApi.listAccounts();

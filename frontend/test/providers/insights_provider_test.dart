@@ -69,5 +69,35 @@ void main() {
       expect(provider.targets.length, originalTargets.length);
       expect(provider.targets.first.targetPct, originalTargets.first.targetPct);
     });
+      test('reset() clears data/targets/errorMessage and returns state to loading', () async {
+      final provider =
+          InsightsProvider(insightsApi: FakeInsightsApi(), targetsApi: FakeTargetsApi());
+      await provider.load();
+      expect(provider.state, LoadState.loaded);
+      var notified = 0;
+      provider.addListener(() => notified++);
+
+      provider.reset();
+
+      expect(provider.state, LoadState.loading);
+      expect(provider.data, isNull);
+      expect(provider.targets, isEmpty);
+      expect(provider.errorMessage, isNull);
+      expect(notified, 1);
+    });
+
+    test('reset() clears a stale error state', () async {
+      final provider = InsightsProvider(
+        insightsApi: FakeInsightsApi(error: ApiException(401, 'Not authenticated')),
+        targetsApi: FakeTargetsApi(),
+      );
+      await provider.load();
+      expect(provider.state, LoadState.error);
+
+      provider.reset();
+
+      expect(provider.state, LoadState.loading);
+      expect(provider.errorMessage, isNull);
+    });
   });
 }

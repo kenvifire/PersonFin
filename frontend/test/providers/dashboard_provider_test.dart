@@ -53,5 +53,60 @@ void main() {
       expect(provider.state, LoadState.loaded);
       expect(provider.data!.currency, 'USD');
     });
+      test('reset() clears data/drift/errorMessage and returns state to loading', () async {
+      final provider =
+          DashboardProvider(dashboardApi: FakeDashboardApi(), targetsApi: FakeTargetsApi());
+      await provider.load();
+      expect(provider.state, LoadState.loaded);
+      var notified = 0;
+      provider.addListener(() => notified++);
+
+      provider.reset();
+
+      expect(provider.state, LoadState.loading);
+      expect(provider.data, isNull);
+      expect(provider.drift, isEmpty);
+      expect(provider.errorMessage, isNull);
+      expect(notified, 1);
+    });
+
+    test('reset() clears a stale error state (e.g. the 401 that caused the sign-out)', () async {
+      final provider = DashboardProvider(
+        dashboardApi: FakeDashboardApi(error: ApiException(401, 'Not authenticated')),
+        targetsApi: FakeTargetsApi(),
+      );
+      await provider.load();
+      expect(provider.state, LoadState.error);
+
+      provider.reset();
+
+      expect(provider.state, LoadState.loading);
+      expect(provider.errorMessage, isNull);
+    });
+
+    test('a load() still in flight when reset() is called does not write its result afterwards',
+        () async {
+      final dashboardApi = GatedDashboardApi();
+      final provider = DashboardProvider(dashboardApi: dashboardApi, targetsApi: FakeTargetsApi());
+
+      final pending = provider.load();
+      provider.reset();
+      dashboardApi.gate.complete();
+      await pending;
+
+      expect(provider.state, LoadState.loading);
+      expect(provider.data, isNull);
+    });
+
+    test('a successful load() clears an errorMessage left by an earlier failure', () async {
+      final provider =
+          DashboardProvider(dashboardApi: FakeDashboardApi(), targetsApi: FakeTargetsApi())
+            ..errorMessage = 'FX down';
+
+      await provider.load();
+
+      expect(provider.state, LoadState.loaded);
+      expect(provider.errorMessage, isNull);
+    });
   });
 }

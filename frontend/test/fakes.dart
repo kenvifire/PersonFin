@@ -224,3 +224,16 @@ class FakeGoogleAuthService implements GoogleAuthService {
         child: const Text('Sign in with Google'),
       );
 }
+
+/// [DashboardApiBase] whose `getDashboard` waits on [gate] before
+/// returning, so a test can interleave other calls (e.g. a reset) while a
+/// load is in flight.
+class GatedDashboardApi implements DashboardApiBase {
+  final gate = Completer<void>();
+
+  @override
+  Future<DashboardData> getDashboard(String currency) async {
+    await gate.future;
+    return dashboardFor(currency);
+  }
+}

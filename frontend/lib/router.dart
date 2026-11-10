@@ -1,6 +1,10 @@
 import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
 
+import 'api/accounts_api.dart';
+import 'api/uploads_api.dart';
 import 'auth/auth_service.dart';
+import 'providers/upload_flow_provider.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/home_shell.dart';
 import 'screens/insights_screen.dart';
@@ -15,7 +19,14 @@ import 'screens/upload_review_screen.dart';
 /// `AuthService.logout()`, which `ApiClient`'s `onUnauthorized` callback
 /// triggers on any 401 — causes the router to re-run `redirect` and send an
 /// unauthenticated user back to `/login`.
-GoRouter buildRouter(AuthService authService) => GoRouter(
+///
+/// [imagePickerService] overrides the `/upload` screen's picker; only tests
+/// pass it (the real picker needs a browser).
+GoRouter buildRouter(
+  AuthService authService, {
+  ImagePickerService? imagePickerService,
+}) =>
+    GoRouter(
       refreshListenable: authService,
       redirect: (context, state) {
         final loggedIn = authService.isAuthenticated;
@@ -46,6 +57,19 @@ GoRouter buildRouter(AuthService authService) => GoRouter(
             ),
           ],
         ),
-        GoRoute(path: '/upload', builder: (c, s) => UploadReviewScreen()),
+        // A fresh UploadFlowProvider per visit: every push of /upload starts
+        // in `picking`, and the provider is disposed when the route pops.
+        // The route builder's context sits below MyApp's MultiProvider, so
+        // the API dependencies are readable here.
+        GoRoute(
+          path: '/upload',
+          builder: (c, s) => ChangeNotifierProvider<UploadFlowProvider>(
+            create: (ctx) => UploadFlowProvider(
+              uploadsApi: ctx.read<UploadsApiBase>(),
+              accountsApi: ctx.read<AccountsApiBase>(),
+            ),
+            child: UploadReviewScreen(imagePickerService: imagePickerService),
+          ),
+        ),
       ],
     );

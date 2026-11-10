@@ -290,5 +290,17 @@ void main() {
       expect(provider.accounts, hasLength(1));
       expect(provider.accounts.first.name, 'Checking');
     });
+      test('an upload completing after the provider is disposed (route popped mid-upload) does '
+        'not throw', () async {
+      final uploadsApi = FakeUploadsApi(extractResult: extractedRecord());
+      final provider =
+          UploadFlowProvider(uploadsApi: uploadsApi, accountsApi: FakeAccountsApi());
+
+      final pending =
+          provider.startUpload(bytes: [1, 2, 3], filename: 'shot.png', mimeType: 'image/png');
+      provider.dispose();
+
+      await expectLater(pending, completes);
+    });
   });
 }

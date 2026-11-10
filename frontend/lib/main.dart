@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,8 +17,8 @@ import 'auth/google_auth_service.dart';
 import 'providers/dashboard_provider.dart';
 import 'providers/insights_provider.dart';
 import 'providers/todos_provider.dart';
-import 'providers/upload_flow_provider.dart';
 import 'router.dart';
+import 'screens/upload_review_screen.dart' show ImagePickerService;
 import 'theme.dart';
 
 /// Never hardcode the backend URL elsewhere — pass
@@ -65,7 +66,7 @@ Future<void> main() async {
   ));
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   final AuthService authService;
   final GoogleAuthService googleAuthService;
   final DashboardApiBase dashboardApi;
@@ -74,6 +75,9 @@ class MyApp extends StatelessWidget {
   final TodosApiBase todosApi;
   final UploadsApiBase uploadsApi;
   final AccountsApiBase accountsApi;
+
+  /// Overrides the `/upload` screen's image picker; tests only.
+  final ImagePickerService? imagePickerService;
 
   const MyApp({
     super.key,
@@ -85,42 +89,114 @@ class MyApp extends StatelessWidget {
     required this.todosApi,
     required this.uploadsApi,
     required this.accountsApi,
+    this.imagePickerService,
   });
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+/// Owns the session-scoped providers and ties their lifecycle to
+/// [AuthService]:
+///
+/// - signed in (at startup with a restored token, or on a fresh login):
+///   load all three, so they fetch the *current* user's data;
+/// - signed out (explicit sign-out, or a 401 anywhere via ApiClient's
+///   `onUnauthorized`): reset all three to an empty `loading` state, so
+///   neither a stale error screen nor the previous user's financial data
+///   survives into the next sign-in.
+///
+/// [UploadFlowProvider] is not owned here — it's scoped to each visit to
+/// `/upload` (see `buildRouter`).
+class _MyAppState extends State<MyApp> {
+  late final DashboardProvider _dashboardProvider;
+  late final InsightsProvider _insightsProvider;
+  late final TodosProvider _todosProvider;
+  late final GoRouter _router;
+  late bool _wasAuthenticated;
+
+  @override
+  void initState() {
+    super.initState();
+    _dashboardProvider = DashboardProvider(
+      dashboardApi: widget.dashboardApi,
+      targetsApi: widget.targetsApi,
+    );
+    _insightsProvider = InsightsProvider(
+      insightsApi: widget.insightsApi,
+      targetsApi: widget.targetsApi,
+    );
+    _todosProvider = TodosProvider(todosApi: widget.todosApi);
+    _router = buildRouter(
+      widget.authService,
+      imagePickerService: widget.imagePickerService,
+    );
+
+    // Listen *before* the initial load: with an expired persisted token,
+    // that load's 401 calls AuthService.logout(), and this listener must
+    // see that transition — otherwise the next sign-in would look like
+    // "still authenticated" and never trigger a reload.
+    _wasAuthenticated = widget.authService.isAuthenticated;
+    widget.authService.addListener(_onAuthChanged);
+    if (_wasAuthenticated) _startSession();
+  }
+
+  void _onAuthChanged() {
+    final isAuthenticated = widget.authService.isAuthenticated;
+    if (isAuthenticated == _wasAuthenticated) return;
+    _wasAuthenticated = isAuthenticated;
+    if (isAuthenticated) {
+      _startSession();
+    } else {
+      _resetSessionData();
+    }
+  }
+
+  void _resetSessionData() {
+    _dashboardProvider.reset();
+    _insightsProvider.reset();
+    _todosProvider.reset();
+  }
+
+  /// Resets first, so anything written while signed out (e.g. a 401 from a
+  /// request that started after the sign-out) is cleared and any request
+  /// still in flight from before is discarded; then loads the new
+  /// session's data.
+  void _startSession() {
+    _resetSessionData();
+    _dashboardProvider.load();
+    _insightsProvider.load();
+    _todosProvider.load();
+  }
+
+  @override
+  void dispose() {
+    widget.authService.removeListener(_onAuthChanged);
+    _router.dispose();
+    _dashboardProvider.dispose();
+    _insightsProvider.dispose();
+    _todosProvider.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider<AuthService>.value(value: authService),
-        Provider<GoogleAuthService>.value(value: googleAuthService),
-        ChangeNotifierProvider<DashboardProvider>(
-          create: (_) => DashboardProvider(
-            dashboardApi: dashboardApi,
-            targetsApi: targetsApi,
-          )..load(),
-        ),
-        ChangeNotifierProvider<InsightsProvider>(
-          create: (_) => InsightsProvider(
-            insightsApi: insightsApi,
-            targetsApi: targetsApi,
-          )..load(),
-        ),
-        ChangeNotifierProvider<TodosProvider>(
-          create: (_) => TodosProvider(todosApi: todosApi)..load(),
-        ),
-        ChangeNotifierProvider<UploadFlowProvider>(
-          create: (_) => UploadFlowProvider(
-            uploadsApi: uploadsApi,
-            accountsApi: accountsApi,
-          ),
-        ),
+        ChangeNotifierProvider<AuthService>.value(value: widget.authService),
+        Provider<GoogleAuthService>.value(value: widget.googleAuthService),
+        Provider<UploadsApiBase>.value(value: widget.uploadsApi),
+        Provider<AccountsApiBase>.value(value: widget.accountsApi),
+        ChangeNotifierProvider<DashboardProvider>.value(value: _dashboardProvider),
+        ChangeNotifierProvider<InsightsProvider>.value(value: _insightsProvider),
+        ChangeNotifierProvider<TodosProvider>.value(value: _todosProvider),
       ],
       child: MaterialApp.router(
         title: 'PersonFin',
         themeMode: ThemeMode.system,
         theme: buildAppTheme(Brightness.light),
         darkTheme: buildAppTheme(Brightness.dark),
-        routerConfig: buildRouter(authService),
+        routerConfig: _router,
       ),
     );
   }

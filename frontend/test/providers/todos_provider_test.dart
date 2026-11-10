@@ -93,5 +93,32 @@ void main() {
       expect(provider.todos, isEmpty);
       expect(todosApi.lastDeletedId, 1);
     });
+      test('reset() clears todos/errorMessage and returns state to loading', () async {
+      final provider = TodosProvider(todosApi: FakeTodosApi());
+      await provider.load();
+      expect(provider.todos, isNotEmpty);
+      var notified = 0;
+      provider.addListener(() => notified++);
+
+      provider.reset();
+
+      expect(provider.state, LoadState.loading);
+      expect(provider.todos, isEmpty);
+      expect(provider.errorMessage, isNull);
+      expect(notified, 1);
+    });
+
+    test('reset() clears a stale error state', () async {
+      final provider = TodosProvider(
+        todosApi: FakeTodosApi(listTodosError: ApiException(401, 'Not authenticated')),
+      );
+      await provider.load();
+      expect(provider.state, LoadState.error);
+
+      provider.reset();
+
+      expect(provider.state, LoadState.loading);
+      expect(provider.errorMessage, isNull);
+    });
   });
 }

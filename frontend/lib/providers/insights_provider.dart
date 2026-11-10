@@ -26,6 +26,9 @@ class InsightsProvider extends ChangeNotifier {
   String? errorMessage;
   String currency = 'CAD';
 
+  /// Bumped by [reset]; see `DashboardProvider._generation`.
+  int _generation = 0;
+
   /// Fetches the insights narrative and allocation targets concurrently
   /// for [currency]. On success, updates [data]/[targets] and sets
   /// [state] to [LoadState.loaded]. If either request throws an
@@ -33,18 +36,33 @@ class InsightsProvider extends ChangeNotifier {
   /// [LoadState.error]. Either way, listeners are notified once at the
   /// end.
   Future<void> load() async {
+    final generation = _generation;
     try {
       final results = await Future.wait([
         _insightsApi.getInsights(currency),
         _targetsApi.listTargets(),
       ]);
+      if (generation != _generation) return;
       data = results[0] as InsightsData;
       targets = results[1] as List<AllocationTarget>;
+      errorMessage = null;
       state = LoadState.loaded;
     } on ApiException catch (e) {
+      if (generation != _generation) return;
       errorMessage = e.message;
       state = LoadState.error;
     }
+    notifyListeners();
+  }
+
+  /// Returns to the initial, empty `loading` state when the session ends
+  /// (see `DashboardProvider.reset`).
+  void reset() {
+    _generation++;
+    state = LoadState.loading;
+    data = null;
+    targets = [];
+    errorMessage = null;
     notifyListeners();
   }
 
@@ -54,14 +72,17 @@ class InsightsProvider extends ChangeNotifier {
   /// is left alone, since a failed edit shouldn't blank out an
   /// already-loaded screen.
   Future<void> updateTarget(String assetClass, double targetPct) async {
+    final generation = _generation;
     try {
       final updated = await _targetsApi.updateTarget(assetClass, targetPct);
+      if (generation != _generation) return;
       targets = [
         for (final target in targets)
           if (target.assetClass == assetClass) updated else target,
       ];
       errorMessage = null;
     } on ApiException catch (e) {
+      if (generation != _generation) return;
       errorMessage = e.message;
     }
     notifyListeners();
