@@ -8,6 +8,7 @@ import 'package:personfin/models/dashboard.dart';
 import 'package:personfin/models/drift_flag.dart';
 import 'package:personfin/models/insights.dart';
 import 'package:personfin/models/todo.dart';
+import 'package:personfin/providers/dashboard_provider.dart' show LoadState;
 import 'package:personfin/providers/insights_provider.dart';
 import 'package:personfin/providers/todos_provider.dart';
 import 'package:personfin/screens/insights_screen.dart';
@@ -62,6 +63,47 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(insightsApi.callCount, 2);
+    });
+
+    // Review Focus: to-dos and insights are independent data; one failing
+    // shouldn't hide the other. This specifically proves the to-do section
+    // renders from TodosProvider.state alone, with InsightsProvider left in
+    // a non-loaded (error) state — not just "both happen to be loaded in
+    // the same test", which every other to-do-focused test below exercises
+    // instead.
+    testWidgets(
+        'renders the to-do list from TodosProvider.state == loaded even while '
+        'InsightsProvider is in a non-loaded (error) state', (tester) async {
+      final insightsApi = FakeInsightsApi(
+        error: ApiException(503, 'Insights temporarily unavailable'),
+      );
+      final insightsProvider =
+          InsightsProvider(insightsApi: insightsApi, targetsApi: FakeTargetsApi());
+      await insightsProvider.load();
+      expect(insightsProvider.state, LoadState.error);
+
+      final todosApi = FakeTodosApi(
+        fixedTodos: [
+          TodoItem(id: 1, description: 'Open a new account', done: false, relatedAssetClass: null),
+        ],
+      );
+      final todosProvider = TodosProvider(todosApi: todosApi);
+      await todosProvider.load();
+      expect(todosProvider.state, LoadState.loaded);
+
+      // Deliberately not pumpAndSettle(): the insights section's error
+      // state here renders no perpetual animation, but a plain pump is
+      // enough since both providers are already resolved before the
+      // first frame — avoids ever depending on an animation to finish.
+      await tester.pumpWidget(buildSubject(insightsProvider, todosProvider));
+      await tester.pump();
+
+      // Insights section still shows its own error UI...
+      expect(find.text('Insights temporarily unavailable'), findsOneWidget);
+      expect(find.text('Retry'), findsOneWidget);
+      // ...and the to-do list renders anyway.
+      expect(find.byType(TodoListTile), findsOneWidget);
+      expect(find.text('Open a new account'), findsOneWidget);
     });
 
     testWidgets('renders an allocation bar per target with correct actual-vs-target fill',
