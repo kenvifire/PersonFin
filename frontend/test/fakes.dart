@@ -143,6 +143,7 @@ class FakeTodosApi implements TodosApiBase {
   int? lastSetDoneId;
   bool? lastSetDoneValue;
   int? lastDeletedId;
+  int listTodosCallCount = 0;
 
   FakeTodosApi({
     this.fixedTodos,
@@ -156,6 +157,7 @@ class FakeTodosApi implements TodosApiBase {
 
   @override
   Future<List<TodoItem>> listTodos() async {
+    listTodosCallCount++;
     if (listTodosError != null) {
       throw listTodosError!;
     }

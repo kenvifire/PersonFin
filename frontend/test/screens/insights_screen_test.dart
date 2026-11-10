@@ -423,5 +423,128 @@ void main() {
 
       expect(todosApi.lastDeletedId, 5);
     });
+  
+    testWidgets('shows a SnackBar when updateTarget fails, and again on a repeat failure with the '
+        'same message', (tester) async {
+      final targetsApi = FakeTargetsApi(
+        updateTargetError: ApiException(422, 'target_pct must be between 0 and 100'),
+      );
+      final insightsProvider =
+          InsightsProvider(insightsApi: FakeInsightsApi(), targetsApi: targetsApi);
+      await insightsProvider.load();
+      final todosProvider = TodosProvider(todosApi: FakeTodosApi());
+      await todosProvider.load();
+
+      await tester.pumpWidget(buildSubject(insightsProvider, todosProvider));
+
+      await insightsProvider.updateTarget('Equity', 70.0);
+      await tester.pump();
+      expect(find.widgetWithText(SnackBar, 'target_pct must be between 0 and 100'), findsOneWidget);
+      // Shown once, then consumed — a rebuild doesn't re-show it.
+      expect(insightsProvider.errorMessage, isNull);
+
+      ScaffoldMessenger.of(tester.element(find.byType(InsightsScreen))).clearSnackBars();
+      await tester.pumpAndSettle();
+      expect(find.byType(SnackBar), findsNothing);
+
+      await insightsProvider.updateTarget('Equity', 70.0);
+      await tester.pump();
+      expect(find.widgetWithText(SnackBar, 'target_pct must be between 0 and 100'), findsOneWidget);
+    });
+
+    testWidgets('shows a SnackBar when adding a to-do fails (the optimistic row is rolled back)',
+        (tester) async {
+      final todosApi = FakeTodosApi(
+        fixedTodos: [],
+        createTodoError: ApiException(422, 'description must not be blank'),
+      );
+      final todosProvider = TodosProvider(todosApi: todosApi);
+      await todosProvider.load();
+      final insightsProvider =
+          InsightsProvider(insightsApi: FakeInsightsApi(), targetsApi: FakeTargetsApi());
+      await insightsProvider.load();
+
+      await tester.pumpWidget(buildSubject(insightsProvider, todosProvider));
+
+      await tester.enterText(find.byType(TextField), 'Call the bank');
+      await tester.tap(find.byIcon(Icons.add));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byType(TodoListTile), findsNothing);
+      expect(find.widgetWithText(SnackBar, 'description must not be blank'), findsOneWidget);
+    });
+
+    testWidgets('shows a SnackBar when toggling a to-do fails', (tester) async {
+      final todosApi = FakeTodosApi(
+        fixedTodos: [
+          TodoItem(id: 1, description: 'Rebalance equity', done: false, relatedAssetClass: null),
+        ],
+        setDoneError: ApiException(500, 'Could not update to-do'),
+      );
+      final todosProvider = TodosProvider(todosApi: todosApi);
+      await todosProvider.load();
+      final insightsProvider =
+          InsightsProvider(insightsApi: FakeInsightsApi(), targetsApi: FakeTargetsApi());
+      await insightsProvider.load();
+
+      await tester.pumpWidget(buildSubject(insightsProvider, todosProvider));
+
+      await tester.tap(find.byType(Checkbox));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.widgetWithText(SnackBar, 'Could not update to-do'), findsOneWidget);
+    });
+
+    testWidgets('shows a SnackBar when deleting a to-do fails', (tester) async {
+      final todosApi = FakeTodosApi(
+        fixedTodos: [
+          TodoItem(id: 5, description: 'Rebalance equity', done: false, relatedAssetClass: null),
+        ],
+        deleteTodoError: ApiException(500, 'Could not delete to-do'),
+      );
+      final todosProvider = TodosProvider(todosApi: todosApi);
+      await todosProvider.load();
+      final insightsProvider =
+          InsightsProvider(insightsApi: FakeInsightsApi(), targetsApi: FakeTargetsApi());
+      await insightsProvider.load();
+
+      await tester.pumpWidget(buildSubject(insightsProvider, todosProvider));
+
+      await tester.tap(find.byIcon(Icons.delete_outline));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byType(TodoListTile), findsOneWidget);
+      expect(find.widgetWithText(SnackBar, 'Could not delete to-do'), findsOneWidget);
+    });
+
+    testWidgets('shows an error + Retry row in the to-do section when the to-dos fail to load, '
+        'and Retry reloads them', (tester) async {
+      final failingTodosApi = FakeTodosApi(listTodosError: ApiException(500, 'Internal server error'));
+      final todosProvider = TodosProvider(todosApi: failingTodosApi);
+      await todosProvider.load();
+      expect(todosProvider.state, LoadState.error);
+      final insightsProvider =
+          InsightsProvider(insightsApi: FakeInsightsApi(), targetsApi: FakeTargetsApi());
+      await insightsProvider.load();
+
+      await tester.pumpWidget(buildSubject(insightsProvider, todosProvider));
+
+      expect(find.text('To-dos'), findsOneWidget);
+      expect(find.text('Internal server error'), findsOneWidget);
+      expect(find.widgetWithText(TextButton, 'Retry'), findsOneWidget);
+      // A load failure is shown inline, not (also) as a SnackBar.
+      expect(find.byType(SnackBar), findsNothing);
+
+      expect(failingTodosApi.listTodosCallCount, 1);
+      await tester.tap(find.widgetWithText(TextButton, 'Retry'));
+      await tester.pumpAndSettle();
+      // Still failing (same fake), but Retry did re-run load().
+      expect(failingTodosApi.listTodosCallCount, 2);
+      expect(find.text('Internal server error'), findsOneWidget);
+      expect(todosProvider.state, LoadState.error);
+    });
   });
 }

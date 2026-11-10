@@ -13,8 +13,10 @@ import '../widgets/todo_list_tile.dart';
 ///
 /// [InsightsProvider] and [TodosProvider] are consumed independently —
 /// the to-do section renders whenever [TodosProvider.state] is
-/// [LoadState.loaded], regardless of the insights state, since the two
-/// are independent data and one failing shouldn't hide the other.
+/// [LoadState.loaded] (or an error + Retry row when it's
+/// [LoadState.error]), regardless of the insights state, since the two
+/// are independent data and one failing shouldn't hide the other. A failed
+/// edit on either provider is surfaced as a SnackBar.
 class InsightsScreen extends StatefulWidget {
   const InsightsScreen({super.key});
 
@@ -24,11 +26,46 @@ class InsightsScreen extends StatefulWidget {
 
 class _InsightsScreenState extends State<InsightsScreen> {
   final _todoController = TextEditingController();
+  late final InsightsProvider _insightsProvider;
+  late final TodosProvider _todosProvider;
+
+  @override
+  void initState() {
+    super.initState();
+    // Failed *edits* (target update, to-do add/toggle/remove) only set the
+    // provider's errorMessage while its state stays `loaded`; nothing in
+    // build() would otherwise show them. Listening (rather than checking in
+    // build) fires once per failure, including a repeat failure with the
+    // same message.
+    _insightsProvider = context.read<InsightsProvider>()..addListener(_onInsightsChanged);
+    _todosProvider = context.read<TodosProvider>()..addListener(_onTodosChanged);
+  }
 
   @override
   void dispose() {
+    _insightsProvider.removeListener(_onInsightsChanged);
+    _todosProvider.removeListener(_onTodosChanged);
     _todoController.dispose();
     super.dispose();
+  }
+
+  void _onInsightsChanged() {
+    final message = _insightsProvider.errorMessage;
+    if (_insightsProvider.state != LoadState.loaded || message == null) return;
+    _insightsProvider.clearErrorMessage();
+    _showError(message);
+  }
+
+  void _onTodosChanged() {
+    final message = _todosProvider.errorMessage;
+    if (_todosProvider.state != LoadState.loaded || message == null) return;
+    _todosProvider.clearErrorMessage();
+    _showError(message);
+  }
+
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _submitTodo(TodosProvider todosProvider) {
@@ -52,6 +89,9 @@ class _InsightsScreenState extends State<InsightsScreen> {
           if (todosProvider.state == LoadState.loaded) ...[
             const SizedBox(height: 24),
             _buildTodoSection(todosProvider),
+          ] else if (todosProvider.state == LoadState.error) ...[
+            const SizedBox(height: 24),
+            _buildTodoError(todosProvider),
           ],
         ],
       ),
@@ -148,6 +188,26 @@ class _InsightsScreenState extends State<InsightsScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildTodoError(TodosProvider todosProvider) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('To-dos', style: TextStyle(fontWeight: FontWeight.bold)),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                todosProvider.errorMessage ?? "Couldn't load your to-dos",
+                key: const ValueKey('todos-error'),
+              ),
+            ),
+            TextButton(onPressed: todosProvider.load, child: const Text('Retry')),
+          ],
+        ),
+      ],
     );
   }
 

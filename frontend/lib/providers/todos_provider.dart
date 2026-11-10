@@ -115,4 +115,12 @@ class TodosProvider extends ChangeNotifier {
     }
     notifyListeners();
   }
+
+  /// Marks a failed edit's [errorMessage] as shown, without notifying —
+  /// called by the screen right after it surfaces the message, so the same
+  /// failure isn't shown again on a later rebuild while a *repeat* failure
+  /// (even with an identical message) still is.
+  void clearErrorMessage() {
+    errorMessage = null;
+  }
 }
