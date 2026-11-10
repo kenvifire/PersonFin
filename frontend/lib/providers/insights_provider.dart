@@ -67,25 +67,51 @@ class InsightsProvider extends ChangeNotifier {
   }
 
   /// Updates the target percentage for [assetClass]. On success, replaces
-  /// the matching entry in [targets] with the server's copy. A failed
-  /// edit only sets [errorMessage] — [state] (and the rest of [targets])
-  /// is left alone, since a failed edit shouldn't blank out an
-  /// already-loaded screen.
-  Future<void> updateTarget(String assetClass, double targetPct) async {
+  /// the matching entry in [targets] with the server's copy and re-fetches
+  /// drift (drift depends on targets, so the old `data.drift` is stale the
+  /// moment a target changes) — just drift via `getDrift`, not the whole
+  /// `getInsights`, which would also re-run the LLM narrative on every
+  /// edit. A failed edit only sets [errorMessage] — [state] (and the rest
+  /// of [targets]) is left alone, since a failed edit shouldn't blank out
+  /// an already-loaded screen.
+  ///
+  /// Returns whether the target itself was saved, so the caller can
+  /// refresh other drift displays (the dashboard's banner).
+  Future<bool> updateTarget(String assetClass, double targetPct) async {
     final generation = _generation;
     try {
       final updated = await _targetsApi.updateTarget(assetClass, targetPct);
-      if (generation != _generation) return;
+      if (generation != _generation) return false;
       targets = [
         for (final target in targets)
           if (target.assetClass == assetClass) updated else target,
       ];
       errorMessage = null;
     } on ApiException catch (e) {
-      if (generation != _generation) return;
+      if (generation != _generation) return false;
       errorMessage = e.message;
+      notifyListeners();
+      return false;
+    }
+
+    try {
+      final drift = await _targetsApi.getDrift(currency);
+      if (generation != _generation) return true;
+      final current = data;
+      if (current != null) {
+        data = InsightsData(
+          dashboard: current.dashboard,
+          drift: drift,
+          narrative: current.narrative,
+          narrativeUnavailable: current.narrativeUnavailable,
+        );
+      }
+    } on ApiException catch (e) {
+      if (generation != _generation) return true;
+      errorMessage = 'Target saved, but drift could not be refreshed: ${e.message}';
     }
     notifyListeners();
+    return true;
   }
 
   /// Marks a failed edit's [errorMessage] as shown, without notifying —

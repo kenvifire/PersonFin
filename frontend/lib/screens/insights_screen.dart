@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/insights.dart';
-import '../providers/dashboard_provider.dart' show LoadState;
+import '../providers/dashboard_provider.dart';
 import '../providers/insights_provider.dart';
 import '../providers/todos_provider.dart';
 import '../widgets/allocation_bar.dart';
@@ -146,12 +146,21 @@ class _InsightsScreenState extends State<InsightsScreen> {
             actualPct: _actualPctFor(data, target.assetClass),
             isUserSet: target.isUserSet,
             isDrifted: driftedClasses.contains(target.assetClass),
-            onTargetChanged: (value) => provider.updateTarget(target.assetClass, value),
+            onTargetChanged: (value) => _updateTarget(provider, target.assetClass, value),
           ),
         const SizedBox(height: 16),
         _buildNarrativeCard(data.narrative),
       ],
     );
+  }
+
+  /// Saves the target, then refreshes the dashboard's drift banner too —
+  /// InsightsProvider refreshes its own drift, but DashboardProvider holds
+  /// a separately fetched copy.
+  Future<void> _updateTarget(InsightsProvider provider, String assetClass, double value) async {
+    final dashboardProvider = context.read<DashboardProvider>();
+    final saved = await provider.updateTarget(assetClass, value);
+    if (saved) await dashboardProvider.refreshDrift();
   }
 
   /// `actualPct = byAssetClass[assetClass] / netWorth * 100`, guarding

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
@@ -6,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import '../models/holding.dart';
 import '../providers/dashboard_provider.dart';
+import '../providers/insights_provider.dart';
 import '../providers/upload_flow_provider.dart';
 
 /// Wraps `image_picker`'s `ImagePicker` behind an interface the screen can
@@ -117,7 +120,12 @@ class _UploadReviewScreenState extends State<UploadReviewScreen> {
     if (provider.state == UploadFlowState.confirmed) {
       _handledTerminalState = true;
       final dashboardProvider = context.read<DashboardProvider>();
+      final insightsProvider = context.read<InsightsProvider>();
       WidgetsBinding.instance.addPostFrameCallback((_) async {
+        // New holdings change allocation/drift/narrative too. Not awaited:
+        // the insights call includes the (slow) LLM narrative, and the
+        // user is returning to the dashboard, not the insights tab.
+        unawaited(insightsProvider.load());
         await dashboardProvider.load();
         if (!mounted) return;
         context.pop();

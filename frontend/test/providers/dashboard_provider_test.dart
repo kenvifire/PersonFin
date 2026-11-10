@@ -108,5 +108,31 @@ void main() {
       expect(provider.state, LoadState.loaded);
       expect(provider.errorMessage, isNull);
     });
+      test('refreshDrift() re-fetches only drift and keeps data/state', () async {
+      final dashboardApi = FakeDashboardApi();
+      final targetsApi = FakeTargetsApi(fixedDrift: []);
+      final provider = DashboardProvider(dashboardApi: dashboardApi, targetsApi: targetsApi);
+      await provider.load();
+      final data = provider.data;
+
+      await provider.refreshDrift();
+
+      expect(targetsApi.callCount, 2);
+      expect(dashboardApi.callCount, 1);
+      expect(provider.drift, isEmpty);
+      expect(provider.data, same(data));
+      expect(provider.state, LoadState.loaded);
+    });
+
+    test('refreshDrift() does nothing before the dashboard has loaded', () async {
+      final targetsApi = FakeTargetsApi();
+      final provider =
+          DashboardProvider(dashboardApi: FakeDashboardApi(), targetsApi: targetsApi);
+
+      await provider.refreshDrift();
+
+      expect(targetsApi.callCount, 0);
+      expect(provider.state, LoadState.loading);
+    });
   });
 }

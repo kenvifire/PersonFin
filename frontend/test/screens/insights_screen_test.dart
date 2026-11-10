@@ -8,7 +8,7 @@ import 'package:personfin/models/dashboard.dart';
 import 'package:personfin/models/drift_flag.dart';
 import 'package:personfin/models/insights.dart';
 import 'package:personfin/models/todo.dart';
-import 'package:personfin/providers/dashboard_provider.dart' show LoadState;
+import 'package:personfin/providers/dashboard_provider.dart';
 import 'package:personfin/providers/insights_provider.dart';
 import 'package:personfin/providers/todos_provider.dart';
 import 'package:personfin/screens/insights_screen.dart';
@@ -21,11 +21,20 @@ import '../fakes.dart';
 /// `InsightsProvider` nor `TodosProvider` has `load()` called
 /// automatically — each test calls it (or not) explicitly, mirroring how
 /// `DashboardScreen`'s tests drive `DashboardProvider`.
-Widget buildSubject(InsightsProvider insightsProvider, TodosProvider todosProvider) {
+Widget buildSubject(
+  InsightsProvider insightsProvider,
+  TodosProvider todosProvider, {
+  DashboardProvider? dashboardProvider,
+}) {
   return MultiProvider(
     providers: [
       ChangeNotifierProvider<InsightsProvider>.value(value: insightsProvider),
       ChangeNotifierProvider<TodosProvider>.value(value: todosProvider),
+      // Read when a target edit succeeds, to refresh the dashboard's drift.
+      ChangeNotifierProvider<DashboardProvider>.value(
+        value: dashboardProvider ??
+            DashboardProvider(dashboardApi: FakeDashboardApi(), targetsApi: FakeTargetsApi()),
+      ),
     ],
     child: const MaterialApp(home: InsightsScreen()),
   );
@@ -545,6 +554,58 @@ void main() {
       expect(failingTodosApi.listTodosCallCount, 2);
       expect(find.text('Internal server error'), findsOneWidget);
       expect(todosProvider.state, LoadState.error);
+    });
+      testWidgets(
+        "a successful target edit refreshes both this screen's drift highlighting and the "
+        "dashboard's drift banner", (tester) async {
+      final data = InsightsData(
+        dashboard: DashboardData(
+          netWorth: 1000.0,
+          currency: 'CAD',
+          byAssetClass: {'equity': 650.0, 'bond': 350.0},
+          byCountry: {},
+          accounts: [],
+          trend: [],
+        ),
+        drift: [DriftFlag(assetClass: 'equity', targetPct: 60.0, actualPct: 65.0, deltaPct: 5.0)],
+        narrative: InsightsNarrative(summary: 'Equity is a bit high.', actionItems: []),
+        narrativeUnavailable: false,
+      );
+      final targets = [
+        AllocationTarget(id: 1, assetClass: 'equity', targetPct: 60.0, isUserSet: true),
+        AllocationTarget(id: 2, assetClass: 'bond', targetPct: 40.0, isUserSet: true),
+      ];
+      // After the edit (equity target -> 65%), the server reports no drift.
+      final targetsApi = FakeTargetsApi(fixedTargets: targets, fixedDrift: []);
+      final insightsProvider = InsightsProvider(
+        insightsApi: FakeInsightsApi(fixedData: data),
+        targetsApi: targetsApi,
+      );
+      await insightsProvider.load();
+      final dashboardTargetsApi = FakeTargetsApi(fixedDrift: driftFor('CAD'));
+      final dashboardProvider =
+          DashboardProvider(dashboardApi: FakeDashboardApi(), targetsApi: dashboardTargetsApi);
+      await dashboardProvider.load();
+      expect(dashboardProvider.drift, isNotEmpty);
+      final todosProvider = TodosProvider(todosApi: FakeTodosApi());
+
+      await tester.pumpWidget(buildSubject(insightsProvider, todosProvider,
+          dashboardProvider: dashboardProvider));
+
+      AllocationBar equityBar() => tester.widget<AllocationBar>(
+          find.byWidgetPredicate((w) => w is AllocationBar && w.assetClass == 'equity'));
+      expect(equityBar().isDrifted, isTrue);
+
+      await tester.tap(find.byWidgetPredicate((w) => w is AllocationBar && w.assetClass == 'equity'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).first, '65');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(targetsApi.lastUpdatedTargetPct, 65.0);
+      expect(equityBar().isDrifted, isFalse, reason: 'insights drift re-fetched after the edit');
+      expect(dashboardTargetsApi.callCount, 2,
+          reason: "dashboard's drift re-fetched after the edit");
     });
   });
 }

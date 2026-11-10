@@ -12,6 +12,7 @@ import 'package:personfin/models/extraction.dart';
 import 'package:personfin/models/holding.dart';
 import 'package:personfin/models/upload.dart';
 import 'package:personfin/providers/dashboard_provider.dart';
+import 'package:personfin/providers/insights_provider.dart';
 import 'package:personfin/providers/upload_flow_provider.dart';
 import 'package:personfin/screens/upload_review_screen.dart';
 
@@ -67,6 +68,7 @@ class _HangingUploadsApi implements UploadsApiBase {
 ({Widget widget, GoRouter router}) buildSubject({
   required UploadFlowProvider uploadProvider,
   DashboardProvider? dashboardProvider,
+  InsightsProvider? insightsProvider,
   ImagePickerService? imagePickerService,
 }) {
   final router = GoRouter(
@@ -87,6 +89,10 @@ class _HangingUploadsApi implements UploadsApiBase {
       ChangeNotifierProvider<DashboardProvider>.value(
         value: dashboardProvider ??
             DashboardProvider(dashboardApi: FakeDashboardApi(), targetsApi: FakeTargetsApi()),
+      ),
+      ChangeNotifierProvider<InsightsProvider>.value(
+        value: insightsProvider ??
+            InsightsProvider(insightsApi: FakeInsightsApi(), targetsApi: FakeTargetsApi()),
       ),
     ],
     child: MaterialApp.router(routerConfig: router),
@@ -327,9 +333,15 @@ void main() {
       final dashboardApi = FakeDashboardApi();
       final targetsApi = FakeTargetsApi();
       final dashboardProvider = DashboardProvider(dashboardApi: dashboardApi, targetsApi: targetsApi);
+      final insightsApi = FakeInsightsApi();
+      final insightsProvider =
+          InsightsProvider(insightsApi: insightsApi, targetsApi: FakeTargetsApi());
 
-      final subject =
-          buildSubject(uploadProvider: provider, dashboardProvider: dashboardProvider);
+      final subject = buildSubject(
+        uploadProvider: provider,
+        dashboardProvider: dashboardProvider,
+        insightsProvider: insightsProvider,
+      );
       await growSurface(tester);
       await tester.pumpWidget(subject.widget);
       subject.router.push('/upload');
@@ -342,6 +354,9 @@ void main() {
       expect(uploadsApi.capturedNewAccount, isNull);
       expect(provider.state, UploadFlowState.confirmed);
       expect(dashboardApi.callCount, 1);
+      // Insights (allocation/drift/narrative) is refreshed too, not left stale.
+      expect(insightsApi.callCount, 1);
+      expect(insightsProvider.state, LoadState.loaded);
       expect(currentLocation(subject.router), '/dashboard');
     });
 

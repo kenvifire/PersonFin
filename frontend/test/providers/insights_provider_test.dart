@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:personfin/api/api_client.dart';
+import 'package:personfin/models/drift_flag.dart';
 import 'package:personfin/providers/dashboard_provider.dart' show LoadState;
 import 'package:personfin/providers/insights_provider.dart';
 
@@ -98,6 +99,37 @@ void main() {
 
       expect(provider.state, LoadState.loading);
       expect(provider.errorMessage, isNull);
+    });
+      test('a successful updateTarget re-fetches drift for the current currency and replaces '
+        'data.drift, keeping the rest of data', () async {
+      final newDrift = [
+        DriftFlag(assetClass: 'Bond', targetPct: 30.0, actualPct: 40.0, deltaPct: 10.0),
+      ];
+      final targetsApi = FakeTargetsApi(fixedDrift: newDrift);
+      final provider = InsightsProvider(insightsApi: FakeInsightsApi(), targetsApi: targetsApi);
+      await provider.load();
+      expect(provider.data!.drift.single.assetClass, 'Equity');
+      final narrative = provider.data!.narrative;
+
+      final saved = await provider.updateTarget('Bond', 30.0);
+
+      expect(saved, isTrue);
+      expect(targetsApi.callCount, 1, reason: 'getDrift called once, after the update');
+      expect(targetsApi.lastRequestedCurrency, 'CAD');
+      expect(provider.data!.drift, newDrift);
+      expect(provider.data!.narrative, same(narrative));
+      expect(provider.errorMessage, isNull);
+    });
+
+    test('a failed updateTarget returns false and does not re-fetch drift', () async {
+      final targetsApi = FakeTargetsApi(updateTargetError: ApiException(422, 'bad'));
+      final provider = InsightsProvider(insightsApi: FakeInsightsApi(), targetsApi: targetsApi);
+      await provider.load();
+
+      final saved = await provider.updateTarget('Bond', 30.0);
+
+      expect(saved, isFalse);
+      expect(targetsApi.callCount, 0);
     });
   });
 }

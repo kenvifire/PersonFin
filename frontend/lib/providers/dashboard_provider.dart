@@ -70,6 +70,24 @@ class DashboardProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Re-fetches only the drift flags (e.g. after an allocation target was
+  /// edited elsewhere), leaving [data]/[state] alone. Does nothing unless
+  /// the dashboard is already loaded; a failure keeps the previous flags,
+  /// since a background refresh shouldn't replace a loaded dashboard with
+  /// an error screen.
+  Future<void> refreshDrift() async {
+    if (state != LoadState.loaded) return;
+    final generation = _generation;
+    try {
+      final refreshed = await _targetsApi.getDrift(currency);
+      if (generation != _generation) return;
+      drift = refreshed;
+      notifyListeners();
+    } on ApiException {
+      // Keep the previous flags; see doc comment.
+    }
+  }
+
   /// Switches the display currency and reloads data for it.
   Future<void> setCurrency(String newCurrency) async {
     currency = newCurrency;
