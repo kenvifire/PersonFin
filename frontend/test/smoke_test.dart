@@ -9,7 +9,6 @@ import 'package:personfin/api/targets_api.dart';
 import 'package:personfin/api/todos_api.dart';
 import 'package:personfin/api/uploads_api.dart';
 import 'package:personfin/auth/auth_service.dart';
-import 'package:personfin/auth/google_auth_service.dart';
 import 'package:personfin/main.dart';
 import 'package:personfin/models/account.dart';
 import 'package:personfin/models/allocation_target.dart';
@@ -21,17 +20,14 @@ import 'package:personfin/models/todo.dart';
 import 'package:personfin/models/upload.dart';
 import 'package:personfin/models/user.dart';
 
+import 'fakes.dart' show FakeGoogleAuthService;
+
 class FakeAuthApi implements AuthApiBase {
   @override
   Future<(String accessToken, AppUser user)> loginWithGoogle(
       String idToken) async {
     return ('fake-token', AppUser(id: 1, email: 'test@example.com'));
   }
-}
-
-class FakeGoogleAuthService implements GoogleAuthService {
-  @override
-  Future<String?> signIn() async => null;
 }
 
 // Not exercised by this test (the login screen never touches these

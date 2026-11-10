@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:personfin/api/auth_api.dart';
 import 'package:personfin/auth/auth_service.dart';
+import 'package:personfin/auth/google_auth_service.dart';
 import 'package:personfin/models/user.dart';
 import 'package:personfin/providers/dashboard_provider.dart';
 import 'package:personfin/router.dart';
@@ -39,8 +40,13 @@ String currentLocation(GoRouter router) =>
 Future<Widget> wrapWithDashboardProvider(GoRouter router) async {
   final provider = DashboardProvider(dashboardApi: FakeDashboardApi(), targetsApi: FakeTargetsApi());
   await provider.load();
-  return ChangeNotifierProvider.value(
-    value: provider,
+  return MultiProvider(
+    providers: [
+      ChangeNotifierProvider.value(value: provider),
+      // LoginScreen (mounted at /login when unauthenticated) subscribes to
+      // GoogleAuthService.idTokens as soon as it's built.
+      Provider<GoogleAuthService>.value(value: FakeGoogleAuthService()),
+    ],
     child: MaterialApp.router(routerConfig: router),
   );
 }

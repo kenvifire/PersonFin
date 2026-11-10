@@ -1,10 +1,14 @@
 // Shared hand-written fakes for `DashboardApiBase`/`TargetsApiBase`/
-// `InsightsApiBase`/`TodosApiBase`, used by the provider tests and the
-// screen tests across tasks.
+// `InsightsApiBase`/`TodosApiBase`/`GoogleAuthService`, used by the
+// provider tests and the screen tests across tasks.
+import 'dart:async';
+
+import 'package:flutter/material.dart';
 import 'package:personfin/api/dashboard_api.dart';
 import 'package:personfin/api/insights_api.dart';
 import 'package:personfin/api/targets_api.dart';
 import 'package:personfin/api/todos_api.dart';
+import 'package:personfin/auth/google_auth_service.dart';
 import 'package:personfin/models/allocation_target.dart';
 import 'package:personfin/models/dashboard.dart';
 import 'package:personfin/models/drift_flag.dart';
@@ -186,4 +190,37 @@ class FakeTodosApi implements TodosApiBase {
       throw deleteTodoError!;
     }
   }
+}
+
+/// Fake [GoogleAuthService]: renders a plain "Sign in with Google" button
+/// standing in for Google's GIS-rendered one. Tapping it runs [onSignIn]
+/// (default: succeed with `'fake-id-token'`) and pushes the outcome onto
+/// [idTokens] exactly as the real web flow would — a token on success,
+/// `null` on cancel, a stream error if [onSignIn] throws.
+class FakeGoogleAuthService implements GoogleAuthService {
+  Future<String?> Function()? onSignIn;
+  final _controller = StreamController<String?>.broadcast();
+
+  FakeGoogleAuthService({this.onSignIn});
+
+  /// Pushes a sign-in result directly, as if Google's button had completed
+  /// a flow on its own.
+  void emit(String? idToken) => _controller.add(idToken);
+
+  @override
+  Stream<String?> get idTokens => _controller.stream;
+
+  @override
+  Widget buildSignInButton() => ElevatedButton(
+        onPressed: () async {
+          final handler = onSignIn;
+          try {
+            final token = handler != null ? await handler() : 'fake-id-token';
+            _controller.add(token);
+          } catch (e, st) {
+            _controller.addError(e, st);
+          }
+        },
+        child: const Text('Sign in with Google'),
+      );
 }

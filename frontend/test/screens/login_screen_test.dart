@@ -10,16 +10,7 @@ import 'package:personfin/auth/google_auth_service.dart';
 import 'package:personfin/models/user.dart';
 import 'package:personfin/screens/login_screen.dart';
 
-class FakeGoogleAuthService implements GoogleAuthService {
-  Future<String?> Function()? onSignIn;
-
-  @override
-  Future<String?> signIn() {
-    final handler = onSignIn;
-    if (handler != null) return handler();
-    return Future.value('fake-id-token');
-  }
-}
+import '../fakes.dart';
 
 class FakeAuthApi implements AuthApiBase {
   String? lastIdToken;
@@ -76,7 +67,7 @@ void main() {
     });
 
     testWidgets(
-        'shows a SnackBar when GoogleAuthService.signIn returns null (user cancelled) without calling loginWithGoogle',
+        'shows a SnackBar when GoogleAuthService.idTokens emits null (user cancelled) without calling loginWithGoogle',
         (tester) async {
       final fakeAuthApi = FakeAuthApi();
       final authService = await buildAuthService(fakeAuthApi);
@@ -114,6 +105,44 @@ void main() {
 
       expect(authService.isAuthenticated, isFalse);
       expect(find.text('Invalid Google token'), findsOneWidget);
+    });
+
+    testWidgets(
+        'shows a generic failure SnackBar when GoogleAuthService.idTokens emits an error, '
+        'without calling loginWithGoogle', (tester) async {
+      final fakeAuthApi = FakeAuthApi();
+      final authService = await buildAuthService(fakeAuthApi);
+      final googleAuthService = FakeGoogleAuthService()
+        ..onSignIn = () async => throw StateError('popup blocked');
+
+      await tester.pumpWidget(buildSubject(
+        googleAuthService: googleAuthService,
+        authService: authService,
+      ));
+      await tester.tap(find.text('Sign in with Google'));
+      await tester.pumpAndSettle();
+
+      expect(fakeAuthApi.lastIdToken, isNull);
+      expect(authService.isAuthenticated, isFalse);
+      expect(find.text('Sign-in failed. Please try again.'), findsOneWidget);
+    });
+
+    testWidgets(
+        'an ID token pushed by Google without any tap in this widget (the web button '
+        'completing on its own) still logs in', (tester) async {
+      final fakeAuthApi = FakeAuthApi();
+      final authService = await buildAuthService(fakeAuthApi);
+      final googleAuthService = FakeGoogleAuthService();
+
+      await tester.pumpWidget(buildSubject(
+        googleAuthService: googleAuthService,
+        authService: authService,
+      ));
+      googleAuthService.emit('pushed-id-token');
+      await tester.pumpAndSettle();
+
+      expect(fakeAuthApi.lastIdToken, 'pushed-id-token');
+      expect(authService.isAuthenticated, isTrue);
     });
   });
 }
