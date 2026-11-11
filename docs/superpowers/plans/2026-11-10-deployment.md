@@ -397,7 +397,7 @@ git commit -m "feat: add one-command deploy script"
 - Create: `deploy/backup-postgres.sh`
 
 **Interfaces:**
-- Consumes: Task 2's `docker-compose.yml` (runs `docker compose exec` against the `db` service).
+- Consumes: Task 2's `docker-compose.yml` (runs `docker compose exec` against the `db` service) and Task 2's `.env` (sourced directly for `POSTGRES_USER`/`POSTGRES_DB` — `docker compose exec` runs on the host, so Compose's `env_file:` doesn't reach this script).
 - Produces: `.sql.gz` dump files in a `backups/` directory (created if missing) alongside wherever the script is run from on the VPS; Task 6 documents the cron entry that runs this daily (installing the cron job itself is the user's manual action, same as everywhere else in this plan).
 
 - [ ] **Step 1: Write `deploy/backup-postgres.sh`**
@@ -410,6 +410,15 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 BACKUP_DIR="$REPO_ROOT/backups"
 RETENTION_DAYS=14
+
+# docker compose exec runs on the host, not inside a container, so
+# Compose's own `env_file:` (which only reaches containers) doesn't get
+# POSTGRES_USER/POSTGRES_DB into *this* shell — read .env directly. This
+# matters most for the real cron job (see DEPLOYMENT.md), which starts
+# with none of a login shell's environment.
+set -a
+. "$REPO_ROOT/.env"
+set +a
 
 mkdir -p "$BACKUP_DIR"
 
@@ -433,8 +442,7 @@ find "$BACKUP_DIR" -name "personfin-*.sql.gz" -mtime "+$RETENTION_DAYS" -delete
 Against Task 2's local compose stack (bring it back up if it was torn down: `docker compose up -d`, loading the same `.env` used there):
 
 ```bash
-export POSTGRES_USER POSTGRES_DB   # from .env, or just hardcode the test values here
-bash deploy/backup-postgres.sh
+bash deploy/backup-postgres.sh   # the script sources .env itself now
 gzip -t backups/personfin-*.sql.gz
 ```
 Expected: the script prints the backup path, and `gzip -t` reports no error (the dump is a valid, non-corrupt gzip file).
