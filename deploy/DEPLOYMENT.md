@@ -37,9 +37,16 @@ reasons:
   Flutter web bundle at *build time* via `--dart-define=GOOGLE_CLIENT_ID=...`
   (see `deploy/deploy.sh`), so the browser-side Google Sign-In button
   initializes with the right client.
-- **The VPS's `.env`'s `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`** — read
-  by the backend (`backend/app/config.py`'s `Settings.google_client_id` /
-  `Settings.google_client_secret`) to verify Google ID tokens server-side.
+- **The VPS's `.env`'s `GOOGLE_CLIENT_ID`** — read by the backend
+  (`backend/app/config.py`'s `Settings.google_client_id`) and used in
+  `backend/app/auth/google_oauth.py`'s `verify_google_id_token` to check a
+  signed-in user's ID token `aud` claim against this client, as part of
+  verifying the token server-side.
+- **The VPS's `.env`'s `GOOGLE_CLIENT_SECRET`** — a required `Settings`
+  field (`Settings.google_client_secret`) that must be set for the backend
+  to start, even though no code path in `backend/app/` currently reads it
+  — ID-token verification above only checks `google_client_id`. Fill it in
+  with the real Client Secret anyway, in case that changes.
 
 Both copies must be the same OAuth client. Keep the Client Secret only in
 the VPS's `.env` — the frontend build never needs it.
@@ -68,10 +75,16 @@ cd /opt/personfin
 cp .env.example .env
 ```
 
-Edit `.env` and fill in every value for real — `docker compose` reads this
-file directly (`env_file: .env` in `docker-compose.yml`) to configure both
-the `db` and `backend` services. Every field here is listed, with its
-purpose, in `.env.example` itself; the required ones are:
+Edit `.env` and fill in every value for real. Compose reads this file in
+two different ways: `backend` gets the whole file as environment
+variables via its own `env_file: .env` declaration in
+`docker-compose.yml`, while `db` has no `env_file:` key at all — it only
+gets the three Postgres variables it needs, through Compose's separate,
+automatic `${VAR}` substitution (Compose always reads a `.env` file in the
+project directory for this, independent of any service's `env_file:`),
+via the `environment: POSTGRES_USER: ${POSTGRES_USER}` etc. lines in
+`docker-compose.yml`. Every field here is listed, with its purpose, in
+`.env.example` itself; the required ones are:
 
 | Variable | Purpose |
 |---|---|
