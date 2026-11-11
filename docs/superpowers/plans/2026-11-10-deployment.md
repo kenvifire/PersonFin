@@ -196,14 +196,27 @@ Expected: `{"status":"ok"}` — confirms the container started, migrations ran (
 
 - [ ] **Step 4: Verify Postgres data survives a restart (Review Focus)**
 
+Checking `alembic_version`'s `version_num` before and after is not sufficient
+on its own: that table only ever holds the current head revision ID, so a
+silently wiped-and-remigrated volume would produce the identical value as a
+genuinely persisted one. Prove persistence with data no migration would ever
+create:
+
 ```bash
-docker compose exec db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT version_num FROM alembic_version;"
+docker compose exec db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+  "CREATE TABLE IF NOT EXISTS _persistence_probe (marker text); INSERT INTO _persistence_probe VALUES ('verify-restart-$(date +%s)');"
+docker compose exec db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT * FROM _persistence_probe;"
 docker compose down       # no -v — volumes must survive this
 docker compose up -d
 curl -s http://127.0.0.1:8000/health   # confirm it comes back up
-docker compose exec db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT version_num FROM alembic_version;"
+docker compose exec db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT * FROM _persistence_probe;"
+docker compose exec db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "DROP TABLE _persistence_probe;"
 ```
-Expected: the same `version_num` both times — the volume persisted, migrations didn't need to re-run from scratch on an empty database.
+Expected: the inserted row is still present after the restart — the volume
+persisted actual data, not just a migration state marker. (The
+`alembic_version` `version_num` check may still be run as supplementary
+color, but the row-based check above is the one that actually proves the
+Review Focus item.)
 
 - [ ] **Step 5: Verify uploaded files survive a container recreation (Review Focus)**
 
