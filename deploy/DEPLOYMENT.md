@@ -68,6 +68,18 @@ Use whatever path you intend to put in `VPS_REPO_DIR` in
 example used throughout this doc and in
 `deploy/deploy.config.sh.example`'s own default.
 
+**Git remote authentication:** both this initial clone and every later
+`git pull` (run by `deploy/deploy.sh` over SSH — see Section 3) need the
+VPS to be able to authenticate to the git remote non-interactively. If
+the repo is private, set this up before the first deploy: either a
+dedicated deploy key (an SSH key pair generated on the VPS, with the
+public half added as a GitHub/GitLab "Deploy Key") for an `ssh://`/`git@`
+remote, or a personal access token embedded in (or supplied via a stored
+credential helper for) an `https://` remote. Without one of these, `git
+pull` will either fail outright or hang waiting for a credential prompt
+that never comes (there's no interactive terminal when it's invoked from
+`deploy.sh`'s `ssh` command).
+
 ### 2.2 Create and fill in `.env`
 
 ```bash
@@ -88,8 +100,8 @@ via the `environment: POSTGRES_USER: ${POSTGRES_USER}` etc. lines in
 
 | Variable | Purpose |
 |---|---|
-| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Real Postgres credentials for the `db` container. Pick a strong password — this is the production database. |
-| `DATABASE_URL` | SQLAlchemy connection string the backend uses. Keep the host as `db` (the Compose service name), e.g. `postgresql://personfin:<your password>@db:5432/personfin`, matching whatever you set above. |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Real Postgres credentials for the `db` container. Pick a strong password — this is the production database. **Note:** `POSTGRES_PASSWORD` is only used by the official Postgres image to *initialize* the database on its very first startup (i.e. the first time the `pgdata` volume is created). Changing it in `.env` later does **not** change the running database's actual password — the two will drift, and the backend's `DATABASE_URL` connection will start failing. To actually rotate it, change the password inside Postgres itself (e.g. `ALTER USER ... PASSWORD ...`) and update `DATABASE_URL` to match, or wipe and recreate the volume (destroying existing data) if that's acceptable. |
+| `DATABASE_URL` | SQLAlchemy connection string the backend uses. Keep the host as `db` (the Compose service name), e.g. `postgresql://personfin:<your password>@db:5432/personfin`, matching whatever you set above. **Note:** this is a URL — if the password contains characters like `@`, `:`, `/`, or `%`, they must be percent-encoded (e.g. `p@ss/word` → `p%40ss%2Fword`) or the connection string will parse incorrectly. |
 | `JWT_SECRET` | Secret key the backend signs/verifies its own JWTs with. Generate a strong random value, e.g. `openssl rand -hex 32` — do not reuse a value from local development. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | The real production OAuth client from Section 1. |
 | `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_API_KEY` / `AZURE_OPENAI_DEPLOYMENT` | Real Azure OpenAI resource details, used for screenshot extraction. |
@@ -99,6 +111,16 @@ via the `environment: POSTGRES_USER: ${POSTGRES_USER}` etc. lines in
 
 Never commit this file — it's git-ignored, and `.env.example` is the only
 version tracked.
+
+**A caution about special characters:** this one `.env` file is parsed by
+two independent tools — Docker Compose's own dotenv parser, and (for
+`deploy/backup-postgres.sh`) your login shell, which sources it directly
+as a shell script (`. .env`). The two don't necessarily agree on how to
+handle shell-special characters. To avoid any value being interpreted
+differently by the two, avoid `$`, backticks, `#`, and unescaped quotes
+in any value here — especially `POSTGRES_PASSWORD` and the other secrets
+— or quote the value carefully (single-quoting the whole value is
+usually safest) if one of those characters is unavoidable.
 
 ### 2.3 Create the frontend webroot
 
@@ -146,16 +168,18 @@ Add a crontab entry (`crontab -e`) that invokes the script **directly**:
 
 **Do not** prefix this with an explicit interpreter, e.g. `sh
 deploy/backup-postgres.sh`. The script's shebang is `#!/bin/bash` and it
-relies on `bash`'s `set -eo pipefail` to catch a failed `pg_dump` even when
-only the downstream `gzip` in the pipe appears to succeed. Invoking it via
-`sh` would silently run it under a shell that doesn't support
-`pipefail`, defeating that safety check — a dump that fails midway could
-then be written out and kept as if it were a good backup. Always let the
-script's own shebang pick its interpreter.
+relies on `bash`'s `set -euo pipefail` to catch a failed `pg_dump` even when
+only the downstream `gzip` in the pipe appears to succeed (and to fail
+loudly on an unset variable, e.g. a `.env` missing `POSTGRES_USER`, instead
+of silently passing an empty value to `pg_dump`). Invoking it via `sh`
+would silently run it under a shell that doesn't support `pipefail`,
+defeating that safety check — a dump that fails midway could then be
+written out and kept as if it were a good backup. Always let the script's
+own shebang pick its interpreter.
 
-Also confirm `git`, `docker`, and `docker compose` are all usable
-non-interactively by whatever user cron runs this as (typically `root`, if
-that's who owns `/opt/personfin`).
+Also confirm `docker` and `docker compose` are usable non-interactively by
+whatever user cron runs this as (typically `root`, if that's who owns
+`/opt/personfin`).
 
 ## 3. First deploy
 
@@ -181,13 +205,21 @@ Flutter SDK locally, which the VPS itself never needs.
    ```bash
    deploy/deploy.sh
    ```
-   This builds the Flutter web release bundle locally
-   (`flutter build web --release` with the `API_BASE_URL` and
-   `GOOGLE_CLIENT_ID` above baked in via `--dart-define`), `rsync`s it to
-   `VPS_FRONTEND_WEBROOT` on the VPS, then SSHes in to `git pull` and
-   `docker compose up -d --build backend` — which also runs
-   `alembic upgrade head` automatically via the backend container's
-   entrypoint before it starts serving.
+   This first checks that your local working tree is clean and (if an
+   upstream is configured) pushed — it refuses to proceed otherwise, since
+   the frontend bundle built below comes from your local tree while the
+   backend comes from whatever the VPS's `git pull` fetches, and those
+   must match. It then SSHes in to `git pull` and
+   `docker compose up -d --build backend` on the VPS first (which also
+   runs `alembic upgrade head` automatically via the backend container's
+   entrypoint before it starts serving), and only *after* that succeeds
+   builds the Flutter web release bundle locally (`flutter build web
+   --release` with the `API_BASE_URL` and `GOOGLE_CLIENT_ID` above baked
+   in via `--dart-define`) and `rsync`s it to `VPS_FRONTEND_WEBROOT` on the
+   VPS. Backend-before-frontend is deliberate: if the backend deploy fails,
+   the script stops before the live frontend is ever touched, rather than
+   leaving a new frontend talking to a backend that never finished
+   upgrading.
 
 3. Confirm the backend container is healthy:
    ```bash
