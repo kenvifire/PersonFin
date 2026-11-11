@@ -1,0 +1,7 @@
+# Copy to deploy.config.sh (git-ignored) and fill in real values.
+VPS_USER=root
+VPS_HOST=proxy.itlubo.com
+VPS_REPO_DIR=/opt/personfin
+VPS_FRONTEND_WEBROOT=/var/www/finance-frontend
+API_BASE_URL=https://finance.itlubo.com/api
+GOOGLE_CLIENT_ID=
