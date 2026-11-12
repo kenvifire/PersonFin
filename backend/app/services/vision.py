@@ -2,7 +2,7 @@
 
 Mirrors `services.fx` exactly: one exception type for every failure mode
 (`ExtractionFailed`), a `VisionExtractor` protocol, a real HTTP-based
-implementation (`AzureOpenAIVisionExtractor`) that wraps every possible
+implementation (`DeepSeekVisionExtractor`) that wraps every possible
 failure into that one exception, and a `get_vision_extractor()` FastAPI
 dependency that yields the extractor and closes its `httpx.Client` in
 `finally`.
@@ -20,7 +20,8 @@ from app.config import get_settings
 from app.schemas.extraction import ExtractionResult
 
 VISION_HTTP_TIMEOUT_SECONDS = 60.0
-AZURE_OPENAI_API_VERSION = "2024-02-15-preview"
+DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
+DEEPSEEK_VISION_MODEL = "deepseek-flash"
 
 EXTRACTION_PROMPT = (
     "You are extracting account holdings data from a screenshot of a "
@@ -59,24 +60,18 @@ class VisionExtractor(Protocol):
     def extract(self, image_bytes: bytes, mime_type: str) -> ExtractionResult: ...
 
 
-class AzureOpenAIVisionExtractor:
-    """Calls an Azure OpenAI chat-completions deployment with the image
-    embedded as a base64 data URL, and parses its JSON response into an
-    `ExtractionResult`."""
+class DeepSeekVisionExtractor:
+    """Calls the DeepSeek vision model with the image embedded as a base64
+    data URL, and parses its JSON response into an `ExtractionResult`."""
 
-    def __init__(self, endpoint: str, api_key: str, deployment: str, client: httpx.Client):
-        self._endpoint = endpoint.rstrip("/")
+    def __init__(self, api_key: str, client: httpx.Client):
         self._api_key = api_key
-        self._deployment = deployment
         self._client = client
 
     def extract(self, image_bytes: bytes, mime_type: str) -> ExtractionResult:
-        url = (
-            f"{self._endpoint}/openai/deployments/{self._deployment}/chat/completions"
-            f"?api-version={AZURE_OPENAI_API_VERSION}"
-        )
         data_url = f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
         payload = {
+            "model": DEEPSEEK_VISION_MODEL,
             "messages": [
                 {
                     "role": "user",
@@ -90,35 +85,37 @@ class AzureOpenAIVisionExtractor:
         }
 
         try:
-            response = self._client.post(url, headers={"api-key": self._api_key}, json=payload)
+            response = self._client.post(
+                DEEPSEEK_API_URL, headers={"Authorization": f"Bearer {self._api_key}"}, json=payload
+            )
             if response.status_code != 200:
-                raise ExtractionFailed(f"Azure OpenAI returned status {response.status_code}")
+                raise ExtractionFailed(f"DeepSeek returned status {response.status_code}")
             body = response.json()
         except httpx.HTTPError as exc:  # connect errors, timeouts, etc.
-            raise ExtractionFailed(f"Azure OpenAI request failed: {exc}") from exc
+            raise ExtractionFailed(f"DeepSeek request failed: {exc}") from exc
         except ValueError as exc:  # non-JSON response body
-            raise ExtractionFailed(f"Azure OpenAI returned a non-JSON body: {exc}") from exc
+            raise ExtractionFailed(f"DeepSeek returned a non-JSON body: {exc}") from exc
 
         try:
             content = body["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
-            raise ExtractionFailed(f"Azure OpenAI response was missing expected fields: {exc}") from exc
+            raise ExtractionFailed(f"DeepSeek response was missing expected fields: {exc}") from exc
 
         try:
             parsed = json.loads(content)
         except (TypeError, ValueError) as exc:
-            raise ExtractionFailed(f"Azure OpenAI message content was not JSON: {exc}") from exc
+            raise ExtractionFailed(f"DeepSeek message content was not JSON: {exc}") from exc
 
         try:
             return ExtractionResult.model_validate(parsed)
         except ValidationError as exc:
-            raise ExtractionFailed(f"Azure OpenAI response didn't match the expected shape: {exc}") from exc
+            raise ExtractionFailed(f"DeepSeek response didn't match the expected shape: {exc}") from exc
 
 
 def get_vision_extractor() -> Generator[VisionExtractor, None, None]:
     """FastAPI dependency used by routers that need a `VisionExtractor`.
 
-    Builds an `AzureOpenAIVisionExtractor` from `get_settings()` plus a
+    Builds a `DeepSeekVisionExtractor` from `get_settings()` plus a
     fresh `httpx.Client`, and closes the client once the request is
     done so connections are never leaked. Tests override this with a
     fake extractor so they never hit the network (see `conftest.py`).
@@ -126,11 +123,6 @@ def get_vision_extractor() -> Generator[VisionExtractor, None, None]:
     settings = get_settings()
     client = httpx.Client(timeout=VISION_HTTP_TIMEOUT_SECONDS)
     try:
-        yield AzureOpenAIVisionExtractor(
-            endpoint=settings.azure_openai_endpoint,
-            api_key=settings.azure_openai_api_key,
-            deployment=settings.azure_openai_deployment,
-            client=client,
-        )
+        yield DeepSeekVisionExtractor(api_key=settings.deepseek_api_key, client=client)
     finally:
         client.close()

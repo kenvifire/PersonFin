@@ -31,13 +31,10 @@ class Settings(BaseSettings):
     # Local disk only — not a secret, just a path. Screenshots never leave
     # the server except for the one vision-extraction API call.
     upload_dir: str = "./data/uploads"
-    azure_openai_endpoint: str
-    azure_openai_api_key: str
-    azure_openai_deployment: str
-    # Optional so a deployment without it still boots: insight narration is
-    # additive, so a missing key just makes `/insights` always degrade to
-    # `narrative_unavailable=True` (see `services.insights`).
-    deepseek_api_key: str | None = None
+    # Required: used both for screenshot vision extraction (services.vision)
+    # and, optionally, insight narration (services.insights degrades
+    # gracefully on its own if that feature's prompt ever fails).
+    deepseek_api_key: str
 
     @field_validator("database_url")
     @classmethod

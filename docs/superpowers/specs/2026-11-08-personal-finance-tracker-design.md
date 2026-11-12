@@ -80,10 +80,11 @@ manual to-do to go fix it themselves.
 - Must run on the user's existing VPS: Docker + nginx already present.
   New services should fit that pattern (own Docker container(s), fronted
   by the existing nginx as reverse proxy at `finance.itluobo.com`).
-- Vision extraction uses Azure OpenAI (GPT-4o-mini or similar vision-
-  capable deployment) — the user has Azure access and wants to use it.
-- Text-based insight generation (allocation commentary, target
-  suggestions) uses DeepSeek — cheaper, text-only.
+- Vision extraction and text-based insight generation (allocation
+  commentary, target suggestions) both use DeepSeek — originally vision
+  used Azure OpenAI, switched to DeepSeek's `deepseek-flash` vision model
+  after the user's Azure subscription had no usable Cognitive Services
+  quota in any region.
 - Auth is Google Sign-In (OAuth), open to any Google account signing up,
   not restricted to the user's own account.
 - Multi-currency: at minimum CAD, USD, CNY, HKD, SGD, plus crypto
@@ -103,7 +104,7 @@ manual to-do to go fix it themselves.
   running on the host) reverse-proxies `finance.itluobo.com` to the app
   container(s). The app does not manage its own TLS termination — that
   stays with the existing nginx/cert setup.
-- **Vision extraction provider:** Azure OpenAI.
+- **Vision extraction provider:** DeepSeek (`deepseek-flash`).
 - **Insight-generation provider:** DeepSeek.
 - **Auth:** Google OAuth sign-in, multi-user, data isolated per user by a
   `user_id` on every record.
@@ -125,7 +126,7 @@ manual to-do to go fix it themselves.
 - **Open access, no quota (accepted risk):** sign-up stays fully open to
   any Google account, with no invite list or usage limit in this
   iteration. This is a deliberate choice despite the real cost exposure
-  of metered Azure OpenAI/DeepSeek calls per upload — revisit if abuse or
+  of metered DeepSeek calls per upload — revisit if abuse or
   cost actually shows up, but nothing is built to guard against it now.
 - **Allocation targets:** system proposes defaults, user edits them;
   edited targets are stored per-user and marked as user-set once touched.
@@ -210,8 +211,8 @@ same screens with more breathing room, not a different layout.
   migration-runner service — simplest reliable choice for a
   single-operator deployment.
 - **Secrets:** one git-ignored `.env` file on the VPS (DB credentials,
-  Azure OpenAI key, DeepSeek key, Google OAuth client ID/secret, session
-  signing secret), referenced via Compose's `env_file:`. Never committed.
+  DeepSeek key, Google OAuth client ID/secret, session signing secret),
+  referenced via Compose's `env_file:`. Never committed.
 - **Deploy workflow:** manual and SSH-triggered, no CI/CD pipeline — a
   single `deploy.sh` script in the repo that does `git pull`, rebuilds
   the `backend` image, runs `flutter build web` with the production
@@ -241,8 +242,8 @@ same screens with more breathing room, not a different layout.
   (e.g. Alembic).
 - Choice of FX-rate data source (any reputable free/low-cost API) and
   crypto price source, and how often rates refresh.
-- Specific Azure OpenAI deployment/model name and DeepSeek model/endpoint
-  wiring, read from environment configuration.
+- Specific DeepSeek model/endpoint wiring, read from environment
+  configuration.
 - Prompt design for vision extraction (per-account-type parsing) and for
   insight/target-suggestion generation.
 - Exact set of default target-allocation heuristics suggested to a new

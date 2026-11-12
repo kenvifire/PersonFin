@@ -362,10 +362,3 @@ def test_missing_api_key_degrades_without_any_network_io(monkeypatch, missing_ke
     assert excinfo.value.category == "missing_api_key"
     with pytest.raises(StopIteration):
         next(dependency)
-
-
-def test_settings_boot_without_a_deepseek_api_key(monkeypatch):
-    from app.config import Settings
-
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    assert Settings(_env_file=None).deepseek_api_key is None

@@ -104,10 +104,9 @@ via the `environment: POSTGRES_USER: ${POSTGRES_USER}` etc. lines in
 | `DATABASE_URL` | SQLAlchemy connection string the backend uses. Keep the host as `db` (the Compose service name), e.g. `postgresql://personfin:<your password>@db:5432/personfin`, matching whatever you set above. **Note:** this is a URL — if the password contains characters like `@`, `:`, `/`, or `%`, they must be percent-encoded (e.g. `p@ss/word` → `p%40ss%2Fword`) or the connection string will parse incorrectly. |
 | `JWT_SECRET` | Secret key the backend signs/verifies its own JWTs with. Generate a strong random value, e.g. `openssl rand -hex 32` — do not reuse a value from local development. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | The real production OAuth client from Section 1. |
-| `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_API_KEY` / `AZURE_OPENAI_DEPLOYMENT` | Real Azure OpenAI resource details, used for screenshot extraction. |
 | `UPLOAD_DIR` | Leave as `/data/uploads` — this is the in-container path backed by the `uploads` named volume in `docker-compose.yml`; don't repoint it. |
 | `FX_API_KEY` | Optional — leave blank if the FX-rate feature isn't needed. |
-| `DEEPSEEK_API_KEY` | Optional — leave blank to run without insight narration (`/insights` degrades gracefully with `narrative_unavailable=True` instead of failing). |
+| `DEEPSEEK_API_KEY` | **Required** — a real DeepSeek API key. Used for screenshot vision extraction (the `deepseek-flash` model; the backend won't start without this), and optionally for insight narration (`/insights` degrades gracefully with `narrative_unavailable=True` if that feature's own call ever fails, but the key itself is mandatory). |
 
 Never commit this file — it's git-ignored, and `.env.example` is the only
 version tracked.
