@@ -44,7 +44,7 @@ manual to-do to go fix it themselves.
 - Support multiple users via Google sign-in, each user's data fully
   isolated from every other user's.
 - Deploy as a containerized app behind the user's existing nginx reverse
-  proxy on his VPS, reachable at `finance.itlubo.com`.
+  proxy on his VPS, reachable at `finance.itluobo.com`.
 
 ## Non-goals
 
@@ -79,7 +79,7 @@ manual to-do to go fix it themselves.
 
 - Must run on the user's existing VPS: Docker + nginx already present.
   New services should fit that pattern (own Docker container(s), fronted
-  by the existing nginx as reverse proxy at `finance.itlubo.com`).
+  by the existing nginx as reverse proxy at `finance.itluobo.com`).
 - Vision extraction uses Azure OpenAI (GPT-4o-mini or similar vision-
   capable deployment) — the user has Azure access and wants to use it.
 - Text-based insight generation (allocation commentary, target
@@ -100,7 +100,7 @@ manual to-do to go fix it themselves.
 - **Backend:** Python + FastAPI.
 - **Database:** PostgreSQL (not SQLite) — multi-user, concurrent writes.
 - **Deployment:** Docker Compose on the existing VPS; nginx (already
-  running on the host) reverse-proxies `finance.itlubo.com` to the app
+  running on the host) reverse-proxies `finance.itluobo.com` to the app
   container(s). The app does not manage its own TLS termination — that
   stays with the existing nginx/cert setup.
 - **Vision extraction provider:** Azure OpenAI.
@@ -199,7 +199,7 @@ same screens with more breathing room, not a different layout.
   `/api` prefix — the backend's route code needs zero changes) and
   everything else falls through to the Flutter build with SPA fallback
   (`try_files $uri $uri/ /index.html;`). The frontend is built with
-  `--dart-define=API_BASE_URL=https://finance.itlubo.com/api`.
+  `--dart-define=API_BASE_URL=https://finance.itluobo.com/api`.
 - **Networking:** `backend`/`db` share an internal Compose network;
   `backend` additionally binds `127.0.0.1:8000:8000` on the host so the
   host's nginx process (not itself containerized) can reach it. No
@@ -221,7 +221,7 @@ same screens with more breathing room, not a different layout.
   production service.
 - **Google OAuth (production):** a one-time manual step in Google Cloud
   Console — create a production OAuth 2.0 Web Client with Authorized
-  JavaScript origin `https://finance.itlubo.com` (the web Google
+  JavaScript origin `https://finance.itluobo.com` (the web Google
   Sign-In flow used by the frontend is origin-based, not a redirect
   flow, so no redirect URI is needed). This can't be scripted from here;
   the plan documents the exact steps for the user to follow once.

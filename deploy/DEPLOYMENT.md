@@ -1,15 +1,15 @@
 # Production Deployment Guide
 
 This is the walkthrough for taking PersonFin from "builds and passes tests
-locally" to "running at `https://finance.itlubo.com`". It assumes the VPS
-(`proxy.itlubo.com`) already runs nginx with TLS configured for
-`finance.itlubo.com` for some other purpose, and that Docker/Docker Compose
-are installed on it.
+locally" to "running at `https://finance.itluobo.com`". The VPS
+(`proxy.itluobo.com`) runs nginx for several other sites, each with its own
+Certbot-issued certificate (see `/etc/nginx/sites-available/`), and has
+Docker/Docker Compose installed — but it has no existing site, DNS record,
+or certificate for `finance.itluobo.com`. Both need to be created from
+scratch as part of this deploy (Section 2.4).
 
 Everything below is a manual, one-time (or first-deploy) set of steps. None
-of it is automated by this repo, and none of it has been executed against
-the real VPS or Google Cloud Console while writing this doc — see the
-plan's Global Constraints.
+of it is automated by this repo.
 
 ## 1. Create the Google OAuth production client
 
@@ -25,7 +25,7 @@ register).
 3. Application type: **Web application**.
 4. Under **Authorized JavaScript origins**, add:
    ```
-   https://finance.itlubo.com
+   https://finance.itluobo.com
    ```
    Leave **Authorized redirect URIs** empty — this flow doesn't use one.
 5. Save, then copy the generated **Client ID** (and **Client secret**).
@@ -53,7 +53,7 @@ the VPS's `.env` — the frontend build never needs it.
 
 ## 2. One-time VPS setup
 
-Run once, the first time this app is deployed to `proxy.itlubo.com`. All of
+Run once, the first time this app is deployed to `proxy.itluobo.com`. All of
 the following happens *on the VPS*, over an SSH session you start yourself
 — this repo's deploy tooling never does this part for you.
 
@@ -130,23 +130,48 @@ mkdir -p /var/www/finance-frontend
 
 This must match `VPS_FRONTEND_WEBROOT` in `deploy/deploy.config.sh`
 (Section 3) — `deploy/deploy.sh` rsyncs the Flutter web build here, and
-`deploy/nginx-finance.itlubo.com.conf`'s `location /` block serves straight
+`deploy/nginx-finance.itluobo.com.conf`'s `location /` block serves straight
 out of this same path (`root /var/www/finance-frontend;`). If you use a
 different path, update it consistently in all three places.
 
-### 2.4 Splice in the nginx config
+### 2.4 Create the DNS record, the site, and the TLS cert
 
-`deploy/nginx-finance.itlubo.com.conf` (from this repo) contains only the
-two `location` blocks PersonFin needs — it deliberately does **not**
-include `listen 443 ssl` / `ssl_certificate` / etc., since those already
-exist on this VPS in whatever pattern its other sites use.
+Unlike this VPS's other sites, `finance.itluobo.com` has no DNS record, no
+nginx site file, and no certificate yet — all three need to be created,
+following the same Certbot pattern this VPS's other sites already use
+(see e.g. `/etc/nginx/sites-available/pca.itluobo.com`).
 
-1. Open the existing TLS server block for `finance.itlubo.com` (check
-   `/etc/nginx/sites-available/` for the file to edit, or wherever this
-   VPS's other sites are configured).
-2. Copy the `location /api/` and `location /` blocks from
-   `deploy/nginx-finance.itlubo.com.conf` into that server block.
-3. Validate and reload:
+1. **DNS:** at your domain's DNS provider, create an `A` record for
+   `finance.itluobo.com` pointing at this VPS's public IP (the same IP
+   `proxy.itluobo.com` resolves to). Wait for it to resolve
+   (`dig +short finance.itluobo.com`) before continuing — Certbot's HTTP-01
+   challenge in the next step will fail otherwise.
+2. **Minimal HTTP site**, so Certbot has a server block to extend:
+   ```bash
+   cat > /etc/nginx/sites-available/finance-itluobo << 'EOF'
+   server {
+       listen 80;
+       listen [::]:80;
+       server_name finance.itluobo.com;
+       root /var/www/finance-frontend;
+   }
+   EOF
+   ln -s /etc/nginx/sites-available/finance-itluobo /etc/nginx/sites-enabled/finance-itluobo
+   nginx -t && systemctl reload nginx
+   ```
+3. **Issue the certificate** (adds the `listen 443 ssl` block and the
+   HTTP→HTTPS redirect automatically, the same way it did for this VPS's
+   other sites):
+   ```bash
+   certbot --nginx -d finance.itluobo.com
+   ```
+4. **Add PersonFin's two `location` blocks.** Open
+   `/etc/nginx/sites-available/finance-itluobo` and copy the
+   `location /api/` and `location /` blocks from this repo's
+   `deploy/nginx-finance.itluobo.com.conf` into the `server { }` block
+   Certbot just added the `listen 443 ssl` directives to (the plain `:80`
+   block Certbot leaves in place is just the redirect — leave it alone).
+5. Validate and reload:
    ```bash
    nginx -t && systemctl reload nginx
    ```
@@ -194,11 +219,11 @@ Flutter SDK locally, which the VPS itself never needs.
 
    | Variable | Value |
    |---|---|
-   | `VPS_USER` | The SSH user for `proxy.itlubo.com` (e.g. `root`). |
-   | `VPS_HOST` | `proxy.itlubo.com` |
+   | `VPS_USER` | The SSH user for `proxy.itluobo.com` (e.g. `root`). |
+   | `VPS_HOST` | `proxy.itluobo.com` |
    | `VPS_REPO_DIR` | The path you cloned the repo to in Section 2.1 (e.g. `/opt/personfin`). |
    | `VPS_FRONTEND_WEBROOT` | The path you created in Section 2.3 (e.g. `/var/www/finance-frontend`). |
-   | `API_BASE_URL` | `https://finance.itlubo.com/api` |
+   | `API_BASE_URL` | `https://finance.itluobo.com/api` |
    | `GOOGLE_CLIENT_ID` | The real production Client ID from Section 1. |
 
 2. Run the deploy script:
@@ -231,10 +256,10 @@ Flutter SDK locally, which the VPS itself never needs.
 
 A short manual checklist against the real production URL — mirrors the
 same end-to-end walkthrough used when the frontend was first wired
-together, but now against `https://finance.itlubo.com` instead of a local
+together, but now against `https://finance.itluobo.com` instead of a local
 backend.
 
-1. Visit `https://finance.itlubo.com` and confirm the login screen renders,
+1. Visit `https://finance.itluobo.com` and confirm the login screen renders,
    with a working Google sign-in button (not an error/unavailable state).
 2. Sign in with a real Google account.
 3. Confirm the dashboard loads (empty state is fine if there's no data

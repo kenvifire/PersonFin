@@ -17,10 +17,10 @@
 - `backend` is built from `python:3.13-slim`, runs `alembic upgrade head` then `exec uvicorn app.main:app --host 0.0.0.0 --port 8000` via its entrypoint, and binds only `127.0.0.1:8000:8000` on the host — nothing else is exposed beyond localhost.
 - Uploaded screenshot images (`UPLOAD_DIR`, default `./data/uploads` per `backend/app/config.py:Settings.upload_dir`) live on a named volume (`uploads`) mounted into the `backend` container, so they survive a container rebuild/recreation — required by the spec's screenshot-retention decision.
 - All secrets (`DATABASE_URL`, `JWT_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `AZURE_OPENAI_*`, `DEEPSEEK_API_KEY`, `FX_API_KEY`) come from one git-ignored `.env` file via Compose's `env_file:` — never committed, never hardcoded.
-- The Flutter web production build is produced with `flutter build web --release --dart-define=API_BASE_URL=https://finance.itlubo.com/api --dart-define=GOOGLE_CLIENT_ID=<prod client id>` (exact flag names verified against `frontend/lib/main.dart:26-27` and `frontend/lib/auth/google_auth_service.dart:39`) — run on the developer's machine, not the VPS; the VPS does not need the Flutter SDK installed.
+- The Flutter web production build is produced with `flutter build web --release --dart-define=API_BASE_URL=https://finance.itluobo.com/api --dart-define=GOOGLE_CLIENT_ID=<prod client id>` (exact flag names verified against `frontend/lib/main.dart:26-27` and `frontend/lib/auth/google_auth_service.dart:39`) — run on the developer's machine, not the VPS; the VPS does not need the Flutter SDK installed.
 - nginx (already running on the VPS host, outside Docker) owns TLS termination and is the only thing the internet reaches. It proxies `location /api/ { proxy_pass http://127.0.0.1:8000/; }` (stripping the `/api` prefix so backend route code needs zero changes) and falls through to the Flutter build with `try_files $uri $uri/ /index.html;` for everything else.
 - No CI/CD. Deployment is manual and SSH-triggered via one `deploy/deploy.sh` script.
-- **This plan's executor has no SSH/root credentials to `proxy.itlubo.com`/`finance.itlubo.com` and must never attempt to connect to, modify, or deploy onto that host.** Every task's verification runs against a local Docker Compose stack and local files only. The actual first production deployment, the nginx config installation, the cron installation, and the Google Cloud Console steps are manual actions documented for the user to perform themselves (Task 6) — building that documentation is in scope; executing it against the real VPS is not.
+- **This plan's executor has no SSH/root credentials to `proxy.itluobo.com`/`finance.itluobo.com` and must never attempt to connect to, modify, or deploy onto that host.** Every task's verification runs against a local Docker Compose stack and local files only. The actual first production deployment, the nginx config installation, the cron installation, and the Google Cloud Console steps are manual actions documented for the user to perform themselves (Task 6) — building that documentation is in scope; executing it against the real VPS is not.
 
 ## Review Focus
 
@@ -41,7 +41,7 @@ docker-compose.yml                        # Task 2
 .env.example                              # Task 2
 
 deploy/
-  nginx-finance.itlubo.com.conf           # Task 3
+  nginx-finance.itluobo.com.conf           # Task 3
   deploy.config.sh.example                # Task 4
   deploy.sh                               # Task 4
   backup-postgres.sh                      # Task 5
@@ -244,17 +244,17 @@ git commit -m "feat: add Docker Compose stack for backend and Postgres"
 ### Task 3: nginx reverse-proxy configuration
 
 **Files:**
-- Create: `deploy/nginx-finance.itlubo.com.conf`
+- Create: `deploy/nginx-finance.itluobo.com.conf`
 
 **Interfaces:**
 - Consumes: the path-space split decided in the spec (`/api/` → backend on `127.0.0.1:8000`, stripped; everything else → the Flutter build with SPA fallback).
-- Produces: a config file Task 6's documentation tells the user to splice into their existing TLS-terminating server block for `finance.itlubo.com` (see the comment this step writes into the file — this plan's executor doesn't know this VPS's existing certbot/cert-path conventions, so the TLS directives are left as a clearly marked placeholder for the user to fill in from whatever pattern their other nginx sites already use, not guessed).
+- Produces: a config file Task 6's documentation tells the user to splice into their existing TLS-terminating server block for `finance.itluobo.com` (see the comment this step writes into the file — this plan's executor doesn't know this VPS's existing certbot/cert-path conventions, so the TLS directives are left as a clearly marked placeholder for the user to fill in from whatever pattern their other nginx sites already use, not guessed).
 
-- [ ] **Step 1: Write `deploy/nginx-finance.itlubo.com.conf`**
+- [ ] **Step 1: Write `deploy/nginx-finance.itluobo.com.conf`**
 
 ```nginx
 # Splice the `location` blocks below into your existing TLS server block
-# for finance.itlubo.com — this file intentionally does NOT include
+# for finance.itluobo.com — this file intentionally does NOT include
 # `listen 443 ssl`/`ssl_certificate`/etc., since those already exist on
 # this VPS in whatever pattern your other sites use (see
 # /etc/nginx/sites-available/ for an example to copy from). This file is
@@ -298,7 +298,7 @@ http {
   }
 }
 EOF
-cp deploy/nginx-finance.itlubo.com.conf /tmp/nginx-test/finance.conf
+cp deploy/nginx-finance.itluobo.com.conf /tmp/nginx-test/finance.conf
 docker run --rm \
   -v /tmp/nginx-test/nginx.conf:/etc/nginx/nginx.conf:ro \
   -v /tmp/nginx-test/finance.conf:/etc/nginx/conf.d/finance.conf:ro \
@@ -309,7 +309,7 @@ Expected: `nginx: configuration file /etc/nginx/nginx.conf test is successful`.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add deploy/nginx-finance.itlubo.com.conf
+git add deploy/nginx-finance.itluobo.com.conf
 git commit -m "feat: add nginx config for the API/SPA path split"
 ```
 
@@ -329,10 +329,10 @@ git commit -m "feat: add nginx config for the API/SPA path split"
 ```sh
 # Copy to deploy.config.sh (git-ignored) and fill in real values.
 VPS_USER=root
-VPS_HOST=proxy.itlubo.com
+VPS_HOST=proxy.itluobo.com
 VPS_REPO_DIR=/opt/personfin
 VPS_FRONTEND_WEBROOT=/var/www/finance-frontend
-API_BASE_URL=https://finance.itlubo.com/api
+API_BASE_URL=https://finance.itluobo.com/api
 GOOGLE_CLIENT_ID=
 ```
 
@@ -499,11 +499,11 @@ This task writes documentation only. It does not run `deploy.sh` against the rea
 
 - [ ] **Step 1: Write the Google OAuth production client section**
 
-Document the exact manual steps in Google Cloud Console: go to APIs & Services → Credentials, create an OAuth 2.0 Client ID of type "Web application", add `https://finance.itlubo.com` as an Authorized JavaScript origin (no redirect URI needed — the frontend's sign-in flow is origin-based, per `frontend/lib/auth/google_auth_service.dart`'s use of `GoogleSignIn.instance.authenticationEvents`/`renderButton`, not a redirect flow), and copy the resulting Client ID into both `deploy/deploy.config.sh`'s `GOOGLE_CLIENT_ID` (used at Flutter build time) and the VPS's `.env`'s `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` (used by the backend to verify ID tokens server-side).
+Document the exact manual steps in Google Cloud Console: go to APIs & Services → Credentials, create an OAuth 2.0 Client ID of type "Web application", add `https://finance.itluobo.com` as an Authorized JavaScript origin (no redirect URI needed — the frontend's sign-in flow is origin-based, per `frontend/lib/auth/google_auth_service.dart`'s use of `GoogleSignIn.instance.authenticationEvents`/`renderButton`, not a redirect flow), and copy the resulting Client ID into both `deploy/deploy.config.sh`'s `GOOGLE_CLIENT_ID` (used at Flutter build time) and the VPS's `.env`'s `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` (used by the backend to verify ID tokens server-side).
 
 - [ ] **Step 2: Write the one-time VPS setup section**
 
-Document, in order: clone the repo to `VPS_REPO_DIR` (matching whatever path the user puts in their own `deploy/deploy.config.sh`); copy `.env.example` to `.env` and fill in every value (the real Azure OpenAI/DeepSeek keys, the real Google OAuth credentials from Step 1, a strong random `JWT_SECRET`, real Postgres credentials); create `VPS_FRONTEND_WEBROOT` (e.g. `mkdir -p /var/www/finance-frontend`); splice `deploy/nginx-finance.itlubo.com.conf`'s location blocks into the existing TLS server block for `finance.itlubo.com` (reference the exact file Task 3 created), then `nginx -t && systemctl reload nginx`; set up the daily backup cron entry calling `deploy/backup-postgres.sh` (reference the exact file Task 5 created) — e.g. `0 3 * * * cd /opt/personfin && deploy/backup-postgres.sh >> /var/log/personfin-backup.log 2>&1`.
+Document, in order: clone the repo to `VPS_REPO_DIR` (matching whatever path the user puts in their own `deploy/deploy.config.sh`); copy `.env.example` to `.env` and fill in every value (the real Azure OpenAI/DeepSeek keys, the real Google OAuth credentials from Step 1, a strong random `JWT_SECRET`, real Postgres credentials); create `VPS_FRONTEND_WEBROOT` (e.g. `mkdir -p /var/www/finance-frontend`); splice `deploy/nginx-finance.itluobo.com.conf`'s location blocks into the existing TLS server block for `finance.itluobo.com` (reference the exact file Task 3 created), then `nginx -t && systemctl reload nginx`; set up the daily backup cron entry calling `deploy/backup-postgres.sh` (reference the exact file Task 5 created) — e.g. `0 3 * * * cd /opt/personfin && deploy/backup-postgres.sh >> /var/log/personfin-backup.log 2>&1`.
 
 - [ ] **Step 3: Write the first-deploy section**
 
@@ -511,11 +511,11 @@ Document running `deploy/deploy.sh` (Task 4) from the developer's own machine fo
 
 - [ ] **Step 4: Write the post-deploy manual smoke-test checklist**
 
-A short numbered list mirroring Plan 4's own final walkthrough, but against the real production URL: visit `https://finance.itlubo.com`, confirm the login screen renders with a working Google sign-in button, sign in with a real account, confirm the dashboard loads (empty state if no data yet), upload a real screenshot through the camera FAB and confirm it reaches the review screen and confirms successfully, visit Insights, sign out and confirm the app returns to `/login`.
+A short numbered list mirroring Plan 4's own final walkthrough, but against the real production URL: visit `https://finance.itluobo.com`, confirm the login screen renders with a working Google sign-in button, sign in with a real account, confirm the dashboard loads (empty state if no data yet), upload a real screenshot through the camera FAB and confirm it reaches the review screen and confirms successfully, visit Insights, sign out and confirm the app returns to `/login`.
 
 - [ ] **Step 5: Self-review for accuracy**
 
-Re-read the document against the actual repo: confirm every file path named (`deploy/nginx-finance.itlubo.com.conf`, `deploy/deploy.sh`, `deploy/deploy.config.sh.example`, `deploy/backup-postgres.sh`, `.env.example`) matches exactly what Tasks 1-6 created, and that every env var name named matches `backend/app/config.py`'s `Settings` fields and `deploy/deploy.config.sh.example`'s fields exactly (a drifted variable name here is the kind of error nothing else in this plan would catch, since this file is never executed by anything).
+Re-read the document against the actual repo: confirm every file path named (`deploy/nginx-finance.itluobo.com.conf`, `deploy/deploy.sh`, `deploy/deploy.config.sh.example`, `deploy/backup-postgres.sh`, `.env.example`) matches exactly what Tasks 1-6 created, and that every env var name named matches `backend/app/config.py`'s `Settings` fields and `deploy/deploy.config.sh.example`'s fields exactly (a drifted variable name here is the kind of error nothing else in this plan would catch, since this file is never executed by anything).
 
 - [ ] **Step 6: Commit**
 
