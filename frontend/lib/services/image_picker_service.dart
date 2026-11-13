@@ -8,11 +8,13 @@ abstract class ImagePickerService {
   Future<({List<int> bytes, String filename, String mimeType})?> pickImage();
 }
 
-/// Real implementation backed by `image_picker`. `ImageSource.camera` adds
-/// the browser's `capture` attribute: mobile browsers honor it and open the
-/// camera directly (matching "snap a screenshot"), while desktop browsers
-/// ignore it and fall back to a normal file dialog — so one source works
-/// for both.
+/// Real implementation backed by `image_picker`. Uses `ImageSource.gallery`
+/// rather than `ImageSource.camera`: the latter sets the browser's
+/// `capture` attribute, which on mobile skips straight to the live camera
+/// with no way to pick an existing photo — wrong for this app's actual use
+/// (uploading an existing screenshot of a statement, not photographing
+/// one). `gallery` opens the platform's normal picker, which on mobile
+/// still offers "take a photo" as one of its options.
 ///
 /// Must be called synchronously from within the user-gesture handler that
 /// triggers it (e.g. a `FloatingActionButton`'s `onPressed`) — not from a
@@ -27,7 +29,7 @@ abstract class ImagePickerService {
 class RealImagePickerService implements ImagePickerService {
   @override
   Future<({List<int> bytes, String filename, String mimeType})?> pickImage() async {
-    final file = await ImagePicker().pickImage(source: ImageSource.camera);
+    final file = await ImagePicker().pickImage(source: ImageSource.gallery);
     if (file == null) return null;
     final bytes = await file.readAsBytes();
     return (bytes: bytes, filename: file.name, mimeType: file.mimeType ?? 'image/jpeg');
