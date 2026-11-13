@@ -1,6 +1,6 @@
 // Shared hand-written fakes for `DashboardApiBase`/`TargetsApiBase`/
-// `InsightsApiBase`/`TodosApiBase`/`GoogleAuthService`, used by the
-// provider tests and the screen tests across tasks.
+// `InsightsApiBase`/`TodosApiBase`/`GoogleAuthService`/`ImagePickerService`,
+// used by the provider tests and the screen tests across tasks.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -14,6 +14,23 @@ import 'package:personfin/models/dashboard.dart';
 import 'package:personfin/models/drift_flag.dart';
 import 'package:personfin/models/insights.dart';
 import 'package:personfin/models/todo.dart';
+import 'package:personfin/services/image_picker_service.dart';
+
+/// Hand-written fake for [ImagePickerService]. Returns [result] (`null`
+/// simulates the user cancelling the picker) and counts calls so tests can
+/// assert the real upload flow was/wasn't kicked off.
+class FakeImagePickerService implements ImagePickerService {
+  final ({List<int> bytes, String filename, String mimeType})? result;
+  int callCount = 0;
+
+  FakeImagePickerService({this.result});
+
+  @override
+  Future<({List<int> bytes, String filename, String mimeType})?> pickImage() async {
+    callCount++;
+    return result;
+  }
+}
 
 DashboardData dashboardFor(String currency) => DashboardData(
       netWorth: 1000.0,

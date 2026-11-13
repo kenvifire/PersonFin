@@ -10,6 +10,7 @@ import 'screens/home_shell.dart';
 import 'screens/insights_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/upload_review_screen.dart';
+import 'services/image_picker_service.dart';
 
 /// Builds the app's [GoRouter], gating every route except `/login` behind
 /// [AuthService.isAuthenticated].
@@ -20,8 +21,8 @@ import 'screens/upload_review_screen.dart';
 /// triggers on any 401 — causes the router to re-run `redirect` and send an
 /// unauthenticated user back to `/login`.
 ///
-/// [imagePickerService] overrides the `/upload` screen's picker; only tests
-/// pass it (the real picker needs a browser).
+/// [imagePickerService] overrides the dashboard's camera-FAB picker; only
+/// tests pass it (the real picker needs a browser).
 GoRouter buildRouter(
   AuthService authService, {
   ImagePickerService? imagePickerService,
@@ -49,7 +50,7 @@ GoRouter buildRouter(
           routes: [
             GoRoute(
               path: '/dashboard',
-              builder: (c, s) => const DashboardScreen(),
+              builder: (c, s) => DashboardScreen(imagePickerService: imagePickerService),
             ),
             GoRoute(
               path: '/insights',
@@ -60,7 +61,8 @@ GoRouter buildRouter(
         // A fresh UploadFlowProvider per visit: every push of /upload starts
         // in `picking`, and the provider is disposed when the route pops.
         // The route builder's context sits below MyApp's MultiProvider, so
-        // the API dependencies are readable here.
+        // the API dependencies are readable here. `extra` carries the image
+        // the dashboard's FAB already picked before pushing this route.
         GoRoute(
           path: '/upload',
           builder: (c, s) => ChangeNotifierProvider<UploadFlowProvider>(
@@ -68,7 +70,9 @@ GoRouter buildRouter(
               uploadsApi: ctx.read<UploadsApiBase>(),
               accountsApi: ctx.read<AccountsApiBase>(),
             ),
-            child: UploadReviewScreen(imagePickerService: imagePickerService),
+            child: UploadReviewScreen(
+              picked: s.extra as ({List<int> bytes, String filename, String mimeType})?,
+            ),
           ),
         ),
       ],

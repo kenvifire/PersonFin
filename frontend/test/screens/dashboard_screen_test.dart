@@ -9,6 +9,7 @@ import 'package:personfin/models/dashboard.dart';
 import 'package:personfin/models/drift_flag.dart';
 import 'package:personfin/providers/dashboard_provider.dart';
 import 'package:personfin/screens/dashboard_screen.dart';
+import 'package:personfin/services/image_picker_service.dart';
 import 'package:personfin/widgets/drift_alert_banner.dart';
 import 'package:personfin/widgets/net_worth_hero.dart';
 import 'package:personfin/widgets/trend_sparkline.dart';
@@ -18,19 +19,29 @@ import '../fakes.dart';
 /// Wraps [DashboardScreen] in the provider it reads and a minimal GoRouter
 /// so taps that call `context.go`/`context.push` (the drift banner, the
 /// FAB) resolve against real routes instead of crashing with "no
-/// GoRouter found".
-({Widget widget, GoRouter router}) buildSubject(DashboardProvider provider) {
+/// GoRouter found". The `/upload` placeholder renders whatever `extra` the
+/// FAB passed it, so tests can assert the exact picked image was forwarded.
+({Widget widget, GoRouter router}) buildSubject(
+  DashboardProvider provider, {
+  ImagePickerService? imagePickerService,
+}) {
   final router = GoRouter(
     initialLocation: '/dashboard',
     routes: [
-      GoRoute(path: '/dashboard', builder: (c, s) => const DashboardScreen()),
+      GoRoute(
+        path: '/dashboard',
+        builder: (c, s) => DashboardScreen(imagePickerService: imagePickerService),
+      ),
       GoRoute(
         path: '/insights',
         builder: (c, s) => const Scaffold(body: Text('Insights Screen')),
       ),
       GoRoute(
         path: '/upload',
-        builder: (c, s) => const Scaffold(body: Text('Upload Screen')),
+        builder: (c, s) {
+          final extra = s.extra as ({List<int> bytes, String filename, String mimeType})?;
+          return Scaffold(body: Text('Upload Screen: ${extra?.filename}'));
+        },
       ),
     ],
   );
@@ -190,6 +201,57 @@ void main() {
       expect(provider.currency, 'USD');
       expect(dashboardApi.lastRequestedCurrency, 'USD');
       expect(targetsApi.lastRequestedCurrency, 'USD');
+    });
+
+    // The picker must run directly from the FAB's onPressed — not from a
+    // screen reached via navigation — so the platform's file/camera dialog
+    // is invoked within the original tap's user-gesture context. Calling it
+    // one hop later (e.g. from the pushed /upload screen's initState, as a
+    // previous version of this flow did) means the browser's synthetic
+    // `element.click()` for that dialog can be silently ignored (seen in
+    // production on iOS Chrome/Safari: no dialog ever opens, and the
+    // picker's returned future then never resolves), leaving the app stuck
+    // on a spinner forever.
+    testWidgets('tapping the camera FAB picks an image and navigates to /upload with it',
+        (tester) async {
+      final dashboardApi = FakeDashboardApi();
+      final targetsApi = FakeTargetsApi();
+      final provider = DashboardProvider(dashboardApi: dashboardApi, targetsApi: targetsApi);
+      await provider.load();
+      final imagePickerService = FakeImagePickerService(
+        result: (bytes: [1, 2, 3], filename: 'shot.png', mimeType: 'image/png'),
+      );
+
+      final subject = buildSubject(provider, imagePickerService: imagePickerService);
+      await tester.pumpWidget(subject.widget);
+
+      await tester.tap(find.byIcon(Icons.camera_alt));
+      await tester.pumpAndSettle();
+
+      expect(imagePickerService.callCount, 1);
+      // Not currentLocation(subject.router): go_router's currentConfiguration.uri
+      // reflects the base route, not a pushed one — the rendered content is the
+      // reliable signal that the push (with the picked image) landed.
+      expect(find.text('Upload Screen: shot.png'), findsOneWidget);
+    });
+
+    testWidgets(
+        'tapping the camera FAB when the picker returns null (the user cancelled) stays on '
+        '/dashboard', (tester) async {
+      final dashboardApi = FakeDashboardApi();
+      final targetsApi = FakeTargetsApi();
+      final provider = DashboardProvider(dashboardApi: dashboardApi, targetsApi: targetsApi);
+      await provider.load();
+      final imagePickerService = FakeImagePickerService(result: null);
+
+      final subject = buildSubject(provider, imagePickerService: imagePickerService);
+      await tester.pumpWidget(subject.widget);
+
+      await tester.tap(find.byIcon(Icons.camera_alt));
+      await tester.pumpAndSettle();
+
+      expect(imagePickerService.callCount, 1);
+      expect(currentLocation(subject.router), '/dashboard');
     });
   });
 }

@@ -29,10 +29,9 @@ import 'package:personfin/screens/insights_screen.dart';
 import 'package:personfin/screens/upload_review_screen.dart';
 import 'package:personfin/widgets/net_worth_hero.dart';
 
-import 'fakes.dart' show FakeGoogleAuthService;
+import 'fakes.dart' show FakeGoogleAuthService, FakeImagePickerService;
 import 'providers/upload_flow_provider_test.dart'
     show FakeUploadsApi, FakeAccountsApi, extractedRecord;
-import 'screens/upload_review_screen_test.dart' show FakeImagePickerService;
 
 /// Stands in for the backend: which user a request belongs to is decided by
 /// the session token the app currently holds (exactly as the real backend

@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
@@ -11,38 +10,20 @@ import '../providers/dashboard_provider.dart';
 import '../providers/insights_provider.dart';
 import '../providers/upload_flow_provider.dart';
 
-/// Wraps `image_picker`'s `ImagePicker` behind an interface the screen can
-/// take as a constructor parameter, so widget tests can fake it instead of
-/// touching the real SDK (which isn't available in the test environment).
-/// `pickImage` returns `null` when the user cancels the picker.
-abstract class ImagePickerService {
-  Future<({List<int> bytes, String filename, String mimeType})?> pickImage();
-}
-
-/// Real implementation backed by `image_picker`. `ImageSource.camera` adds
-/// the browser's `capture` attribute: mobile browsers honor it and open the
-/// camera directly (matching "snap a screenshot"), while desktop browsers
-/// ignore it and fall back to a normal file dialog — so one source works
-/// for both.
-class RealImagePickerService implements ImagePickerService {
-  @override
-  Future<({List<int> bytes, String filename, String mimeType})?> pickImage() async {
-    final file = await ImagePicker().pickImage(source: ImageSource.camera);
-    if (file == null) return null;
-    final bytes = await file.readAsBytes();
-    return (bytes: bytes, filename: file.name, mimeType: file.mimeType ?? 'image/jpeg');
-  }
-}
-
-/// The screen shown after tapping the dashboard's camera FAB: picks a
-/// screenshot, runs it through [UploadFlowProvider]'s upload-then-extract
-/// flow, and lets the user review/edit the extracted holdings before
-/// confirming them into a real snapshot (or discarding the upload).
+/// The screen shown after the dashboard's camera FAB has already picked a
+/// screenshot: runs [picked] through [UploadFlowProvider]'s upload-then-
+/// extract flow, and lets the user review/edit the extracted holdings
+/// before confirming them into a real snapshot (or discarding the upload).
+///
+/// The image is picked by the caller (see `DashboardScreen`), not by this
+/// screen, and passed in via [picked] — picking it here instead, after the
+/// navigation to this screen, would call the platform image picker outside
+/// the original tap's user-gesture context, which browsers (iOS WebKit in
+/// particular) silently refuse to honor (see `RealImagePickerService`).
 class UploadReviewScreen extends StatefulWidget {
-  final ImagePickerService imagePickerService;
+  final ({List<int> bytes, String filename, String mimeType})? picked;
 
-  UploadReviewScreen({super.key, ImagePickerService? imagePickerService})
-      : imagePickerService = imagePickerService ?? RealImagePickerService();
+  const UploadReviewScreen({super.key, this.picked});
 
   @override
   State<UploadReviewScreen> createState() => _UploadReviewScreenState();
@@ -63,23 +44,16 @@ class _UploadReviewScreenState extends State<UploadReviewScreen> {
     super.initState();
     final provider = context.read<UploadFlowProvider>();
     provider.loadAccounts();
-    if (provider.state == UploadFlowState.picking) {
-      _pickAndStartUpload(provider);
+    if (provider.state == UploadFlowState.picking && widget.picked != null) {
+      // Deferred a tick: notifyListeners() inside startUpload() would
+      // otherwise fire synchronously while this very widget is still being
+      // built (initState runs mid-mount), which Flutter disallows.
+      Future.microtask(() => provider.startUpload(
+            bytes: widget.picked!.bytes,
+            filename: widget.picked!.filename,
+            mimeType: widget.picked!.mimeType,
+          ));
     }
-  }
-
-  Future<void> _pickAndStartUpload(UploadFlowProvider provider) async {
-    final picked = await widget.imagePickerService.pickImage();
-    if (!mounted) return;
-    if (picked == null) {
-      context.pop();
-      return;
-    }
-    await provider.startUpload(
-      bytes: picked.bytes,
-      filename: picked.filename,
-      mimeType: picked.mimeType,
-    );
   }
 
   @override

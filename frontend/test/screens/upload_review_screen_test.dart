@@ -20,22 +20,6 @@ import '../fakes.dart';
 import '../providers/upload_flow_provider_test.dart'
     show extractedRecord, failedRecord, FakeUploadsApi, FakeAccountsApi;
 
-/// Hand-written fake for [ImagePickerService]. Returns [result] (`null`
-/// simulates the user cancelling the picker) and counts calls so tests can
-/// assert the real upload flow was/wasn't kicked off.
-class FakeImagePickerService implements ImagePickerService {
-  final ({List<int> bytes, String filename, String mimeType})? result;
-  int callCount = 0;
-
-  FakeImagePickerService({this.result});
-
-  @override
-  Future<({List<int> bytes, String filename, String mimeType})?> pickImage() async {
-    callCount++;
-    return result;
-  }
-}
-
 /// `UploadsApiBase` whose every call hangs forever (never completes), used
 /// only to pin the provider in `uploading` so the spinner view can be
 /// asserted without racing a real async resolution.
@@ -69,7 +53,6 @@ class _HangingUploadsApi implements UploadsApiBase {
   required UploadFlowProvider uploadProvider,
   DashboardProvider? dashboardProvider,
   InsightsProvider? insightsProvider,
-  ImagePickerService? imagePickerService,
 }) {
   final router = GoRouter(
     initialLocation: '/dashboard',
@@ -78,7 +61,7 @@ class _HangingUploadsApi implements UploadsApiBase {
       GoRoute(
         path: '/upload',
         builder: (c, s) => UploadReviewScreen(
-          imagePickerService: imagePickerService ?? FakeImagePickerService(),
+          picked: s.extra as ({List<int> bytes, String filename, String mimeType})?,
         ),
       ),
     ],
@@ -118,14 +101,14 @@ void main() {
         (tester) async {
       final provider =
           UploadFlowProvider(uploadsApi: _HangingUploadsApi(), accountsApi: FakeAccountsApi());
-      final imagePickerService = FakeImagePickerService(
-        result: (bytes: [1, 2, 3], filename: 'shot.png', mimeType: 'image/png'),
-      );
 
-      final subject = buildSubject(uploadProvider: provider, imagePickerService: imagePickerService);
+      final subject = buildSubject(uploadProvider: provider);
       await growSurface(tester);
       await tester.pumpWidget(subject.widget);
-      subject.router.push('/upload');
+      subject.router.push(
+        '/upload',
+        extra: (bytes: [1, 2, 3], filename: 'shot.png', mimeType: 'image/png'),
+      );
       await tester.pump();
       await tester.pump();
       await tester.pump();
@@ -510,21 +493,20 @@ void main() {
       expect(currentLocation(subject.router), '/dashboard');
     });
 
-    testWidgets('when the image picker returns null, the screen navigates back to /dashboard '
+    // Picker-cancel handling now lives on DashboardScreen (the picker runs
+    // before navigating here at all) — see dashboard_screen_test.dart.
+    testWidgets('with no picked image (e.g. a direct navigation), stays in the picking state '
         'without calling startUpload', (tester) async {
       final uploadsApi = FakeUploadsApi(extractResult: extractedRecord());
       final provider = UploadFlowProvider(uploadsApi: uploadsApi, accountsApi: FakeAccountsApi());
-      final imagePickerService = FakeImagePickerService(result: null);
 
-      final subject = buildSubject(uploadProvider: provider, imagePickerService: imagePickerService);
+      final subject = buildSubject(uploadProvider: provider);
       await growSurface(tester);
       await tester.pumpWidget(subject.widget);
       subject.router.push('/upload');
-      await tester.pumpAndSettle();
+      await tester.pump();
 
-      expect(imagePickerService.callCount, 1);
       expect(provider.state, UploadFlowState.picking);
-      expect(currentLocation(subject.router), '/dashboard');
     });
   });
 }

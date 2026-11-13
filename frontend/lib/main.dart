@@ -18,7 +18,7 @@ import 'providers/dashboard_provider.dart';
 import 'providers/insights_provider.dart';
 import 'providers/todos_provider.dart';
 import 'router.dart';
-import 'screens/upload_review_screen.dart' show ImagePickerService;
+import 'services/image_picker_service.dart' show ImagePickerService;
 import 'theme.dart';
 
 /// Never hardcode the backend URL elsewhere — pass

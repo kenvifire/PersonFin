@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../models/dashboard.dart';
 import '../providers/dashboard_provider.dart';
+import '../services/image_picker_service.dart';
 import '../widgets/account_breakdown_list.dart';
 import '../widgets/currency_switcher.dart';
 import '../widgets/drift_alert_banner.dart';
@@ -15,7 +16,10 @@ import '../widgets/trend_sparkline.dart';
 /// drift alert when allocations are off target, and a per-account
 /// breakdown — all in the currently selected display currency.
 class DashboardScreen extends StatelessWidget {
-  const DashboardScreen({super.key});
+  final ImagePickerService imagePickerService;
+
+  DashboardScreen({super.key, ImagePickerService? imagePickerService})
+      : imagePickerService = imagePickerService ?? RealImagePickerService();
 
   @override
   Widget build(BuildContext context) {
@@ -32,10 +36,23 @@ class DashboardScreen extends StatelessWidget {
       ),
       body: _buildBody(context, provider),
       floatingActionButton: FloatingActionButton(
-        onPressed: () => context.push('/upload'),
+        onPressed: () => _pickAndReview(context),
         child: const Icon(Icons.camera_alt),
       ),
     );
+  }
+
+  /// Picks an image, synchronously (from the engine's perspective) in
+  /// response to the FAB tap, and only then navigates to `/upload` with it
+  /// — see `RealImagePickerService`'s doc comment for why the picker must
+  /// be called from here rather than from the pushed screen's `initState`.
+  Future<void> _pickAndReview(BuildContext context) async {
+    final router = GoRouter.of(context);
+    final picked = await imagePickerService.pickImage();
+    if (!context.mounted) return;
+    if (picked != null) {
+      router.push('/upload', extra: picked);
+    }
   }
 
   Widget _buildBody(BuildContext context, DashboardProvider provider) {
