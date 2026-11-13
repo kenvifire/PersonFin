@@ -107,6 +107,7 @@ via the `environment: POSTGRES_USER: ${POSTGRES_USER}` etc. lines in
 | `UPLOAD_DIR` | Leave as `/data/uploads` — this is the in-container path backed by the `uploads` named volume in `docker-compose.yml`; don't repoint it. |
 | `FX_API_KEY` | Optional — leave blank if the FX-rate feature isn't needed. |
 | `DEEPSEEK_API_KEY` | **Required** — a real DeepSeek API key. Used for screenshot vision extraction (the `deepseek-flash` model; the backend won't start without this), and optionally for insight narration (`/insights` degrades gracefully with `narrative_unavailable=True` if that feature's own call ever fails, but the key itself is mandatory). |
+| `OPENAI_API_KEY` | Optional — a real OpenAI API key. If set, screenshot vision extraction retries with OpenAI (`gpt-4o-mini`) when the DeepSeek call fails. Not used for insight narration. Leave blank to disable the fallback. |
 
 Never commit this file — it's git-ignored, and `.env.example` is the only
 version tracked.

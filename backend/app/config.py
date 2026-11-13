@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     # and, optionally, insight narration (services.insights degrades
     # gracefully on its own if that feature's prompt ever fails).
     deepseek_api_key: str
+    # Optional fallback for screenshot vision extraction only: if set,
+    # services.vision retries with OpenAI when the DeepSeek call fails.
+    # Insight narration never uses this key.
+    openai_api_key: str | None = None
 
     @field_validator("database_url")
     @classmethod
