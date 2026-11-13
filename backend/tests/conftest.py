@@ -13,7 +13,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("JWT_SECRET", "test-jwt-secret-at-least-32-bytes-long")
 os.environ.setdefault("GOOGLE_CLIENT_ID", "test-google-client-id")
 os.environ.setdefault("GOOGLE_CLIENT_SECRET", "test-google-client-secret")
-os.environ.setdefault("DEEPSEEK_API_KEY", "test-deepseek-key")
+os.environ.setdefault("OPENAI_API_KEY", "test-openai-key")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -67,7 +67,7 @@ class FailingFXRateProvider:
 
 class FakeVisionExtractor:
     """A `VisionExtractor` that returns a fixed result or raises
-    `ExtractionFailed`, so tests never hit the real DeepSeek API.
+    `ExtractionFailed`, so tests never hit the real OpenAI API.
     Tests pick one or the other per call via
     `app.dependency_overrides[vision.get_vision_extractor] = lambda: FakeVisionExtractor(...)`,
     the same per-test override style used for `fx.get_fx_provider`.
@@ -85,7 +85,7 @@ class FakeVisionExtractor:
 
 class FakeInsightGenerator:
     """An `InsightGenerator` that returns a fixed result or raises
-    `InsightGenerationFailed`, so tests never hit the real DeepSeek API.
+    `InsightGenerationFailed`, so tests never hit the real OpenAI API.
     Same shape as `FakeVisionExtractor`.
     """
 

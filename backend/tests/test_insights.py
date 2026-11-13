@@ -58,7 +58,7 @@ def _set_target(client, headers, asset_class, pct):
     assert response.status_code == 200
 
 
-def test_insights_for_new_user_skips_deepseek_and_returns_empty_narrative(client, auth_header_for):
+def test_insights_for_new_user_skips_openai_and_returns_empty_narrative(client, auth_header_for):
     headers = auth_header_for("a@example.com")
 
     def exploding_generate(dashboard, drift, user_set_asset_classes):
@@ -102,7 +102,7 @@ def test_insights_degrades_gracefully_on_generation_failure(client, auth_header_
     _add_cash(client, headers)
 
     def failing_generate(dashboard, drift, user_set_asset_classes):
-        raise insights.InsightGenerationFailed("DeepSeek timed out")
+        raise insights.InsightGenerationFailed("OpenAI timed out")
 
     with override_insight_generator(_FnGenerator(failing_generate)):
         response = client.get("/insights?currency=USD", headers=headers)
@@ -115,7 +115,7 @@ def test_insights_degrades_gracefully_on_generation_failure(client, auth_header_
 
 def test_override_helper_restores_the_default_fake_for_later_requests(client, auth_header_for):
     """A second request in the same test must fall back to conftest's
-    default fake, not the real DeepSeek dependency."""
+    default fake, not the real OpenAI dependency."""
     headers = auth_header_for("a@example.com")
     _add_cash(client, headers)
 
@@ -150,7 +150,7 @@ def test_insights_passes_user_set_provenance_to_the_generator(client, auth_heade
 
 
 def test_insights_prompt_distinguishes_default_and_user_set_targets_end_to_end(client, auth_header_for):
-    """Through the real `DeepSeekInsightGenerator` (mock transport), the
+    """Through the real `OpenAIInsightGenerator` (mock transport), the
     prompt actually sent caveats default targets and not user-set ones."""
     headers = auth_header_for("a@example.com")
     _add_cash(client, headers)  # 100% cash: every default target drifts
@@ -162,7 +162,7 @@ def test_insights_prompt_distinguishes_default_and_user_set_targets_end_to_end(c
         content = json.dumps({"summary": "ok", "action_items": []})
         return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
 
-    generator = insights.DeepSeekInsightGenerator(api_key="k", client=httpx.Client(transport=httpx.MockTransport(handler)))
+    generator = insights.OpenAIInsightGenerator(api_key="k", client=httpx.Client(transport=httpx.MockTransport(handler)))
     with override_insight_generator(generator):
         assert client.get("/insights?currency=USD", headers=headers).json()["narrative_unavailable"] is False
 
@@ -213,12 +213,12 @@ def test_insights_backstop_degrades_when_generator_returns_garbage(client, auth_
 def test_insights_logs_generation_failure_category_without_secrets_or_prompt(client, auth_header_for, caplog):
     headers = auth_header_for("a@example.com")
     _add_cash(client, headers)
-    api_key = "sk-super-secret-deepseek-key"
+    api_key = "sk-super-secret-openai-key"
 
     def handler(request):
         return httpx.Response(500, text="upstream exploded")
 
-    generator = insights.DeepSeekInsightGenerator(api_key=api_key, client=httpx.Client(transport=httpx.MockTransport(handler)))
+    generator = insights.OpenAIInsightGenerator(api_key=api_key, client=httpx.Client(transport=httpx.MockTransport(handler)))
     with caplog.at_level(logging.DEBUG):
         with override_insight_generator(generator):
             response = client.get("/insights?currency=USD", headers=headers)
@@ -274,12 +274,12 @@ def test_insights_filters_action_items_to_drifted_asset_classes(client, auth_hea
 # --- Fix 8: a missing API key degrades instead of failing ---------------------
 
 
-def test_insights_degrades_when_no_deepseek_api_key_is_configured(client, auth_header_for, monkeypatch):
+def test_insights_degrades_when_no_openai_api_key_is_configured(client, auth_header_for, monkeypatch):
     from app.config import get_settings
 
     headers = auth_header_for("a@example.com")
     _add_cash(client, headers)
-    settings = get_settings().model_copy(update={"deepseek_api_key": None})
+    settings = get_settings().model_copy(update={"openai_api_key": None})
     monkeypatch.setattr(insights, "get_settings", lambda: settings)
 
     def no_client(*args, **kwargs):

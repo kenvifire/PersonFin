@@ -1,15 +1,15 @@
-"""DeepSeek-based generation of narrative insights from a user's
-dashboard and allocation drift.
+"""OpenAI-based generation of narrative insights from a user's dashboard
+and allocation drift.
 
 Mirrors `services.vision` exactly: one exception type for every failure
 mode (`InsightGenerationFailed`), an `InsightGenerator` protocol, a real
-HTTP-based implementation (`DeepSeekInsightGenerator`) that wraps every
+HTTP-based implementation (`OpenAIInsightGenerator`) that wraps every
 possible failure into that one exception, and a `get_insight_generator()`
 FastAPI dependency that yields the generator and closes its
 `httpx.Client` in `finally`.
 
-The whole DeepSeek call runs under a wall-clock deadline
-(`DEEPSEEK_HTTP_TIMEOUT_SECONDS`), not just httpx's per-read timeout —
+The whole OpenAI call runs under a wall-clock deadline
+(`OPENAI_HTTP_TIMEOUT_SECONDS`), not just httpx's per-read timeout —
 a server trickling a byte at a time resets a per-read timeout forever.
 """
 
@@ -28,11 +28,11 @@ from app.schemas.dashboard import DashboardOut
 from app.schemas.insights import InsightsNarrative
 from app.schemas.target import DriftFlag
 
-DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
-DEEPSEEK_MODEL = "deepseek-chat"
+OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
+OPENAI_MODEL = "gpt-4o-mini"
 # Used both as httpx's per-operation timeout and as the wall-clock
-# deadline for the whole DeepSeek call (see `DeepSeekInsightGenerator`).
-DEEPSEEK_HTTP_TIMEOUT_SECONDS = 15.0
+# deadline for the whole OpenAI call (see `OpenAIInsightGenerator`).
+OPENAI_HTTP_TIMEOUT_SECONDS = 15.0
 
 # Decimal places every number in the prompt is rounded to.
 PROMPT_DECIMAL_PLACES = 2
@@ -131,9 +131,9 @@ def _build_prompt(
     )
 
 
-class DeepSeekInsightGenerator:
-    """Calls the DeepSeek chat-completions API with a prompt built from
-    the dashboard and drift flags, and parses its JSON response into an
+class OpenAIInsightGenerator:
+    """Calls OpenAI's chat-completions API with a prompt built from the
+    dashboard and drift flags, and parses its JSON response into an
     `InsightsNarrative`.
 
     The HTTP call runs in a worker thread and the caller waits at most
@@ -147,7 +147,7 @@ class DeepSeekInsightGenerator:
         self,
         api_key: str,
         client: httpx.Client,
-        deadline_seconds: float = DEEPSEEK_HTTP_TIMEOUT_SECONDS,
+        deadline_seconds: float = OPENAI_HTTP_TIMEOUT_SECONDS,
     ):
         self._api_key = api_key
         self._client = client
@@ -179,7 +179,7 @@ class DeepSeekInsightGenerator:
         user_set_asset_classes: frozenset[str],
     ) -> InsightsNarrative:
         payload = {
-            "model": DEEPSEEK_MODEL,
+            "model": OPENAI_MODEL,
             "messages": [
                 {"role": "user", "content": _build_prompt(dashboard, drift, user_set_asset_classes)}
             ],
@@ -192,44 +192,44 @@ class DeepSeekInsightGenerator:
             body = json.loads(raw_body)
         except (ValueError, RecursionError) as exc:  # non-JSON / pathologically nested body
             raise InsightGenerationFailed(
-                f"DeepSeek returned a non-JSON body: {type(exc).__name__}", category="invalid_json"
+                f"OpenAI returned a non-JSON body: {type(exc).__name__}", category="invalid_json"
             ) from exc
 
         try:
             content = body["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise InsightGenerationFailed(
-                f"DeepSeek response was missing expected fields: {exc}", category="missing_fields"
+                f"OpenAI response was missing expected fields: {exc}", category="missing_fields"
             ) from exc
 
         try:
             parsed = json.loads(content)
         except (TypeError, ValueError, RecursionError) as exc:
             raise InsightGenerationFailed(
-                f"DeepSeek message content was not JSON: {type(exc).__name__}", category="invalid_json"
+                f"OpenAI message content was not JSON: {type(exc).__name__}", category="invalid_json"
             ) from exc
 
         try:
             return InsightsNarrative.model_validate(parsed)
         except ValidationError as exc:
             raise InsightGenerationFailed(
-                f"DeepSeek response didn't match the expected shape: {exc}", category="schema_mismatch"
+                f"OpenAI response didn't match the expected shape: {exc}", category="schema_mismatch"
             ) from exc
 
     def _post_with_deadline(self, payload: dict) -> bytes:
         deadline = time.monotonic() + self._deadline_seconds
-        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="deepseek-insights")
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="openai-insights")
         try:
             future = executor.submit(self._post, payload, deadline)
             return future.result(timeout=self._deadline_seconds)
         except FutureTimeoutError as exc:
             raise InsightGenerationFailed(
-                f"DeepSeek did not respond within {self._deadline_seconds}s", category="timeout"
+                f"OpenAI did not respond within {self._deadline_seconds}s", category="timeout"
             ) from exc
         except httpx.TimeoutException as exc:
-            raise InsightGenerationFailed(f"DeepSeek request timed out: {exc}", category="timeout") from exc
+            raise InsightGenerationFailed(f"OpenAI request timed out: {exc}", category="timeout") from exc
         except httpx.HTTPError as exc:  # connect errors, protocol errors, etc.
-            raise InsightGenerationFailed(f"DeepSeek request failed: {exc}", category="transport") from exc
+            raise InsightGenerationFailed(f"OpenAI request failed: {exc}", category="transport") from exc
         finally:
             # Never wait on the worker: if it's still running, it stops
             # itself at the deadline (see `_post`).
@@ -240,24 +240,24 @@ class DeepSeekInsightGenerator:
         as soon as the wall-clock `deadline` has passed."""
         with self._client.stream(
             "POST",
-            DEEPSEEK_API_URL,
+            OPENAI_API_URL,
             headers={"Authorization": f"Bearer {self._api_key}"},
             json=payload,
         ) as response:
             if response.status_code != 200:
                 raise InsightGenerationFailed(
-                    f"DeepSeek returned status {response.status_code}", category="http_status"
+                    f"OpenAI returned status {response.status_code}", category="http_status"
                 )
             chunks: list[bytes] = []
             for chunk in response.iter_bytes():
                 if time.monotonic() >= deadline:
-                    raise InsightGenerationFailed("DeepSeek response exceeded its deadline", category="timeout")
+                    raise InsightGenerationFailed("OpenAI response exceeded its deadline", category="timeout")
                 chunks.append(chunk)
             return b"".join(chunks)
 
 
 class UnconfiguredInsightGenerator:
-    """Used when no `deepseek_api_key` is configured: every call fails
+    """Used when no `openai_api_key` is configured: every call fails
     immediately with `InsightGenerationFailed`, without any network I/O,
     so `/insights` degrades gracefully instead of the app failing to boot."""
 
@@ -267,13 +267,13 @@ class UnconfiguredInsightGenerator:
         drift: list[DriftFlag],
         user_set_asset_classes: frozenset[str],
     ) -> InsightsNarrative:
-        raise InsightGenerationFailed("DeepSeek API key is not configured", category="missing_api_key")
+        raise InsightGenerationFailed("OpenAI API key is not configured", category="missing_api_key")
 
 
 def get_insight_generator() -> Generator[InsightGenerator, None, None]:
     """FastAPI dependency used by routers that need an `InsightGenerator`.
 
-    Builds a `DeepSeekInsightGenerator` from `get_settings()` plus a
+    Builds an `OpenAIInsightGenerator` from `get_settings()` plus a
     fresh `httpx.Client`, and closes the client once the request is
     done so connections are never leaked. Tests override this with a
     fake generator so they never hit the network (see `conftest.py`).
@@ -284,12 +284,12 @@ def get_insight_generator() -> Generator[InsightGenerator, None, None]:
     the route's own error handling and surface as a 500.
     """
     settings = get_settings()
-    if not settings.deepseek_api_key:
+    if not settings.openai_api_key:
         yield UnconfiguredInsightGenerator()
         return
 
-    client = httpx.Client(timeout=DEEPSEEK_HTTP_TIMEOUT_SECONDS)
+    client = httpx.Client(timeout=OPENAI_HTTP_TIMEOUT_SECONDS)
     try:
-        yield DeepSeekInsightGenerator(api_key=settings.deepseek_api_key, client=client)
+        yield OpenAIInsightGenerator(api_key=settings.openai_api_key, client=client)
     finally:
         client.close()

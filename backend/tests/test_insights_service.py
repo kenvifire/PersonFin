@@ -1,4 +1,4 @@
-"""`DeepSeekInsightGenerator`: mocked-transport tests only, never the
+"""`OpenAIInsightGenerator`: mocked-transport tests only, never the
 real network."""
 
 import json
@@ -13,9 +13,9 @@ from app.schemas.dashboard import DashboardOut
 from app.schemas.insights import InsightsNarrative
 from app.schemas.target import DriftFlag
 from app.services.insights import (
-    DEEPSEEK_HTTP_TIMEOUT_SECONDS,
-    DeepSeekInsightGenerator,
+    OPENAI_HTTP_TIMEOUT_SECONDS,
     InsightGenerationFailed,
+    OpenAIInsightGenerator,
 )
 
 
@@ -27,7 +27,7 @@ def _dashboard():
     )
 
 
-def test_deepseek_generator_parses_valid_response():
+def test_openai_generator_parses_valid_response():
     def handler(request):
         body = {"choices": [{"message": {"content": json.dumps({
             "summary": "Your portfolio is mostly cash with a growing crypto position.",
@@ -35,7 +35,7 @@ def test_deepseek_generator_parses_valid_response():
         })}}]}
         return httpx.Response(200, json=body)
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    generator = DeepSeekInsightGenerator(api_key="k", client=client)
+    generator = OpenAIInsightGenerator(api_key="k", client=client)
 
     drift = [DriftFlag(asset_class="crypto", target_pct=10.0, actual_pct=16.0, delta_pct=6.0)]
     result = generator.generate(_dashboard(), drift, frozenset({"crypto"}))
@@ -43,29 +43,29 @@ def test_deepseek_generator_parses_valid_response():
     assert result.action_items[0].asset_class == "crypto"
 
 
-def test_deepseek_generator_wraps_bad_status_as_insight_generation_failed():
+def test_openai_generator_wraps_bad_status_as_insight_generation_failed():
     def handler(request):
         return httpx.Response(500, text="server error")
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    generator = DeepSeekInsightGenerator(api_key="k", client=client)
+    generator = OpenAIInsightGenerator(api_key="k", client=client)
     with pytest.raises(InsightGenerationFailed):
         generator.generate(_dashboard(), [], frozenset())
 
 
-def test_deepseek_generator_wraps_malformed_content_as_insight_generation_failed():
+def test_openai_generator_wraps_malformed_content_as_insight_generation_failed():
     def handler(request):
         return httpx.Response(200, json={"choices": [{"message": {"content": "not json"}}]})
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    generator = DeepSeekInsightGenerator(api_key="k", client=client)
+    generator = OpenAIInsightGenerator(api_key="k", client=client)
     with pytest.raises(InsightGenerationFailed):
         generator.generate(_dashboard(), [], frozenset())
 
 
-def test_deepseek_generator_wraps_connection_error_as_insight_generation_failed():
+def test_openai_generator_wraps_connection_error_as_insight_generation_failed():
     def handler(request):
         raise httpx.ConnectError("boom")
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    generator = DeepSeekInsightGenerator(api_key="k", client=client)
+    generator = OpenAIInsightGenerator(api_key="k", client=client)
     with pytest.raises(InsightGenerationFailed):
         generator.generate(_dashboard(), [], frozenset())
 
@@ -97,9 +97,9 @@ def test_deepseek_generator_wraps_connection_error_as_insight_generation_failed(
         "missing-summary",
     ],
 )
-def test_deepseek_generator_bad_responses_raise_insight_generation_failed(response):
+def test_openai_generator_bad_responses_raise_insight_generation_failed(response):
     client = httpx.Client(transport=httpx.MockTransport(lambda request: response))
-    generator = DeepSeekInsightGenerator(api_key="k", client=client)
+    generator = OpenAIInsightGenerator(api_key="k", client=client)
     with pytest.raises(InsightGenerationFailed):
         generator.generate(_dashboard(), [], frozenset())
 
@@ -109,12 +109,12 @@ def test_deepseek_generator_bad_responses_raise_insight_generation_failed(respon
     [httpx.ConnectError("refused"), httpx.ReadTimeout("slow")],
     ids=["connect-error", "timeout"],
 )
-def test_deepseek_generator_transport_errors_raise_insight_generation_failed(error):
+def test_openai_generator_transport_errors_raise_insight_generation_failed(error):
     def handler(request):
         raise error
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    generator = DeepSeekInsightGenerator(api_key="k", client=client)
+    generator = OpenAIInsightGenerator(api_key="k", client=client)
     with pytest.raises(InsightGenerationFailed):
         generator.generate(_dashboard(), [], frozenset())
 
@@ -143,7 +143,7 @@ def _valid_body(summary="Looks fine.", action_items=()):
 
 
 def _capturing_generator(captured, **kwargs):
-    """A real `DeepSeekInsightGenerator` over a mock transport that
+    """A real `OpenAIInsightGenerator` over a mock transport that
     records every outgoing request and answers with a valid body."""
 
     def handler(request):
@@ -151,7 +151,7 @@ def _capturing_generator(captured, **kwargs):
         return httpx.Response(200, json=_valid_body())
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    return DeepSeekInsightGenerator(api_key="k", client=client, **kwargs)
+    return OpenAIInsightGenerator(api_key="k", client=client, **kwargs)
 
 
 def _prompt_from(request) -> str:
@@ -243,7 +243,7 @@ def test_generate_enforces_a_wall_clock_deadline_against_a_trickling_response():
 
     # Per-read timeout far larger than the deadline, so only the deadline can fire.
     client = httpx.Client(transport=httpx.MockTransport(handler), timeout=30.0)
-    generator = DeepSeekInsightGenerator(api_key="k", client=client, deadline_seconds=0.5)
+    generator = OpenAIInsightGenerator(api_key="k", client=client, deadline_seconds=0.5)
 
     started = time.monotonic()
     try:
@@ -257,7 +257,7 @@ def test_generate_enforces_a_wall_clock_deadline_against_a_trickling_response():
     assert excinfo.value.category == "timeout"
 
 
-def test_abandoned_deepseek_call_stops_reading_on_its_own():
+def test_abandoned_openai_call_stops_reading_on_its_own():
     """After the caller gives up, the worker thread must not keep
     consuming a trickling response in the background."""
     chunks_sent = []
@@ -274,7 +274,7 @@ def test_abandoned_deepseek_call_stops_reading_on_its_own():
         transport=httpx.MockTransport(lambda request: httpx.Response(200, content=trickle())),
         timeout=30.0,
     )
-    generator = DeepSeekInsightGenerator(api_key="k", client=client, deadline_seconds=0.3)
+    generator = OpenAIInsightGenerator(api_key="k", client=client, deadline_seconds=0.3)
     with pytest.raises(InsightGenerationFailed):
         generator.generate(_dashboard(), [], frozenset())
 
@@ -286,8 +286,8 @@ def test_abandoned_deepseek_call_stops_reading_on_its_own():
 
 def test_generate_default_deadline_is_the_configured_http_timeout():
     client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=_valid_body())))
-    generator = DeepSeekInsightGenerator(api_key="k", client=client)
-    assert generator._deadline_seconds == DEEPSEEK_HTTP_TIMEOUT_SECONDS
+    generator = OpenAIInsightGenerator(api_key="k", client=client)
+    assert generator._deadline_seconds == OPENAI_HTTP_TIMEOUT_SECONDS
 
 
 def test_deeply_nested_content_raising_recursion_error_is_wrapped():
@@ -297,7 +297,7 @@ def test_deeply_nested_content_raising_recursion_error_is_wrapped():
     client = httpx.Client(transport=httpx.MockTransport(
         lambda r: httpx.Response(200, json={"choices": [{"message": {"content": nested}}]})
     ))
-    generator = DeepSeekInsightGenerator(api_key="k", client=client)
+    generator = OpenAIInsightGenerator(api_key="k", client=client)
     with pytest.raises(InsightGenerationFailed):
         generator.generate(_dashboard(), [], frozenset())
 
@@ -305,7 +305,7 @@ def test_deeply_nested_content_raising_recursion_error_is_wrapped():
 def test_deeply_nested_response_body_raising_recursion_error_is_wrapped():
     nested = b"[" * 200_000 + b"]" * 200_000
     client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, content=nested)))
-    generator = DeepSeekInsightGenerator(api_key="k", client=client)
+    generator = OpenAIInsightGenerator(api_key="k", client=client)
     with pytest.raises(InsightGenerationFailed):
         generator.generate(_dashboard(), [], frozenset())
 
@@ -318,7 +318,7 @@ def test_unanticipated_exception_inside_generate_is_wrapped(monkeypatch):
 
     monkeypatch.setattr(insights_module.InsightsNarrative, "model_validate", boom)
     client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=_valid_body())))
-    generator = DeepSeekInsightGenerator(api_key="k", client=client)
+    generator = OpenAIInsightGenerator(api_key="k", client=client)
     with pytest.raises(InsightGenerationFailed):
         generator.generate(_dashboard(), [], frozenset())
 
@@ -328,7 +328,7 @@ def test_empty_summary_is_rejected_as_insight_generation_failed(summary):
     client = httpx.Client(transport=httpx.MockTransport(
         lambda r: httpx.Response(200, json=_valid_body(summary=summary))
     ))
-    generator = DeepSeekInsightGenerator(api_key="k", client=client)
+    generator = OpenAIInsightGenerator(api_key="k", client=client)
     with pytest.raises(InsightGenerationFailed) as excinfo:
         generator.generate(_dashboard(), [], frozenset())
     # Flows through the existing pydantic ValidationError path.
@@ -347,7 +347,7 @@ def test_missing_api_key_degrades_without_any_network_io(monkeypatch, missing_ke
     import app.services.insights as insights_module
     from app.config import get_settings
 
-    settings = get_settings().model_copy(update={"deepseek_api_key": missing_key})
+    settings = get_settings().model_copy(update={"openai_api_key": missing_key})
     monkeypatch.setattr(insights_module, "get_settings", lambda: settings)
 
     def no_client(*args, **kwargs):

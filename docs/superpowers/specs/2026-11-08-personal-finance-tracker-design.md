@@ -81,10 +81,12 @@ manual to-do to go fix it themselves.
   New services should fit that pattern (own Docker container(s), fronted
   by the existing nginx as reverse proxy at `finance.itluobo.com`).
 - Vision extraction and text-based insight generation (allocation
-  commentary, target suggestions) both use DeepSeek — originally vision
-  used Azure OpenAI, switched to DeepSeek's `deepseek-flash` vision model
-  after the user's Azure subscription had no usable Cognitive Services
-  quota in any region.
+  commentary, target suggestions) both use OpenAI (`gpt-4o-mini`) —
+  originally vision used Azure OpenAI, switched to DeepSeek's
+  `deepseek-flash` vision model after the user's Azure subscription had
+  no usable Cognitive Services quota in any region, then switched again
+  to OpenAI for both vision and insights once the user decided to drop
+  DeepSeek from production entirely.
 - Auth is Google Sign-In (OAuth), open to any Google account signing up,
   not restricted to the user's own account.
 - Multi-currency: at minimum CAD, USD, CNY, HKD, SGD, plus crypto
@@ -104,8 +106,10 @@ manual to-do to go fix it themselves.
   running on the host) reverse-proxies `finance.itluobo.com` to the app
   container(s). The app does not manage its own TLS termination — that
   stays with the existing nginx/cert setup.
-- **Vision extraction provider:** DeepSeek (`deepseek-flash`).
-- **Insight-generation provider:** DeepSeek.
+- **Vision extraction provider:** OpenAI (`gpt-4o-mini`) — previously
+  Azure OpenAI, then DeepSeek (`deepseek-flash`); see Constraints above.
+- **Insight-generation provider:** OpenAI (`gpt-4o-mini`) — previously
+  DeepSeek.
 - **Auth:** Google OAuth sign-in, multi-user, data isolated per user by a
   `user_id` on every record.
 - **Account identity and matching:** an account is a persistent entity
@@ -126,7 +130,7 @@ manual to-do to go fix it themselves.
 - **Open access, no quota (accepted risk):** sign-up stays fully open to
   any Google account, with no invite list or usage limit in this
   iteration. This is a deliberate choice despite the real cost exposure
-  of metered DeepSeek calls per upload — revisit if abuse or
+  of metered OpenAI calls per upload — revisit if abuse or
   cost actually shows up, but nothing is built to guard against it now.
 - **Allocation targets:** system proposes defaults, user edits them;
   edited targets are stored per-user and marked as user-set once touched.
@@ -178,7 +182,7 @@ same screens with more breathing room, not a different layout.
   fields instead of pre-filled ones.
 - **Insights/To-dos screen:** one screen combining allocation-vs-target
   bars (actual vs. target per asset class, drift visually flagged), the
-  DeepSeek narrative text above those bars, and the manual to-do list
+  OpenAI narrative text above those bars, and the manual to-do list
   (checkable items, add/complete) below.
 - **Login:** a plain centered screen — app name and a single "Sign in
   with Google" button. Nothing else; settled without further discussion.
@@ -211,7 +215,7 @@ same screens with more breathing room, not a different layout.
   migration-runner service — simplest reliable choice for a
   single-operator deployment.
 - **Secrets:** one git-ignored `.env` file on the VPS (DB credentials,
-  DeepSeek key, Google OAuth client ID/secret, session signing secret),
+  OpenAI key, Google OAuth client ID/secret, session signing secret),
   referenced via Compose's `env_file:`. Never committed.
 - **Deploy workflow:** manual and SSH-triggered, no CI/CD pipeline — a
   single `deploy.sh` script in the repo that does `git pull`, rebuilds
@@ -242,7 +246,7 @@ same screens with more breathing room, not a different layout.
   (e.g. Alembic).
 - Choice of FX-rate data source (any reputable free/low-cost API) and
   crypto price source, and how often rates refresh.
-- Specific DeepSeek model/endpoint wiring, read from environment
+- Specific OpenAI model/endpoint wiring, read from environment
   configuration.
 - Prompt design for vision extraction (per-account-type parsing) and for
   insight/target-suggestion generation.

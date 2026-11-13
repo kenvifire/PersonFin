@@ -1,6 +1,6 @@
-"""Pydantic schemas for DeepSeek-generated portfolio insights.
+"""Pydantic schemas for OpenAI-generated portfolio insights.
 
-The structured shape a DeepSeek chat-completion's JSON content is
+The structured shape an OpenAI chat-completion's JSON content is
 parsed and validated into — the insights-generation analog of
 `schemas/extraction.py`'s role for vision extraction.
 """
