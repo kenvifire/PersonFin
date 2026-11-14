@@ -28,6 +28,7 @@ def test_validate_upload_accepts_supported_mime_type_within_size_limit():
     validate_upload("image/png", b"small file")
     validate_upload("image/jpeg", b"small file")
     validate_upload("image/webp", b"small file")
+    validate_upload("application/pdf", b"small file")
 
 
 def test_save_and_delete_upload_image_roundtrip(tmp_path):
@@ -51,10 +52,12 @@ def test_save_upload_image_uses_extension_matching_mime_type(tmp_path):
     png_path = save_upload_image(base_dir, user_id=1, upload_id=1, mime_type="image/png", content=b"x")
     jpeg_path = save_upload_image(base_dir, user_id=1, upload_id=2, mime_type="image/jpeg", content=b"x")
     webp_path = save_upload_image(base_dir, user_id=1, upload_id=3, mime_type="image/webp", content=b"x")
+    pdf_path = save_upload_image(base_dir, user_id=1, upload_id=4, mime_type="application/pdf", content=b"x")
 
     assert png_path.endswith(".png")
     assert jpeg_path.endswith(".jpg")
     assert webp_path.endswith(".webp")
+    assert pdf_path.endswith(".pdf")
 
 
 def test_save_upload_image_scopes_path_by_user(tmp_path):

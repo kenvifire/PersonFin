@@ -9,6 +9,33 @@ import pytest
 from app.services.vision import ExtractionFailed, OpenAIVisionExtractor
 
 
+def _minimal_pdf(text: str) -> bytes:
+    """Builds a minimal, real, single-page PDF whose extracted text is
+    exactly `text` — hand-assembled (correct object offsets and xref
+    table) rather than relying on a PDF-writing library, so these tests
+    don't need one just to produce a parseable fixture."""
+    content = f"BT /F1 24 Tf 10 100 Td ({text}) Tj ET".encode()
+    objects = [
+        b"<</Type/Catalog/Pages 2 0 R>>",
+        b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        b"<</Type/Page/Parent 2 0 R/Resources<</Font<</F1 4 0 R>>>>/MediaBox[0 0 200 200]/Contents 5 0 R>>",
+        b"<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>",
+        b"<</Length " + str(len(content)).encode() + b">>\nstream\n" + content + b"\nendstream",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for i, obj in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += f"{i} 0 obj".encode() + b"\n" + obj + b"\nendobj\n"
+    xref_offset = len(out)
+    n = len(objects) + 1
+    out += f"xref\n0 {n}\n".encode() + b"0000000000 65535 f \n"
+    for offset in offsets:
+        out += f"{offset:010d} 00000 n \n".encode()
+    out += f"trailer<</Size {n}/Root 1 0 R>>\nstartxref\n{xref_offset}\n%%EOF".encode()
+    return bytes(out)
+
+
 def test_openai_extractor_parses_valid_response():
     def handler(request):
         body = {
@@ -107,6 +134,33 @@ def test_openai_extractor_transport_errors_raise_extraction_failed(error):
     extractor = OpenAIVisionExtractor(api_key="k", client=client)
     with pytest.raises(ExtractionFailed):
         extractor.extract(b"fake-bytes", "image/png")
+
+
+def test_openai_extractor_sends_pdf_text_as_a_text_only_message():
+    captured = {}
+
+    def handler(request):
+        captured["body"] = json.loads(request.content)
+        body = {"choices": [{"message": {"content": json.dumps({"holdings": []})}}]}
+        return httpx.Response(200, json=body)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    extractor = OpenAIVisionExtractor(api_key="k", client=client)
+    pdf_bytes = _minimal_pdf("Account 123 USD 456.78")
+
+    extractor.extract(pdf_bytes, "application/pdf")
+
+    content_blocks = captured["body"]["messages"][0]["content"]
+    assert len(content_blocks) == 1
+    assert content_blocks[0]["type"] == "text"
+    assert "Account 123 USD 456.78" in content_blocks[0]["text"]
+
+
+def test_openai_extractor_wraps_an_unparseable_pdf_as_extraction_failed():
+    client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200)))
+    extractor = OpenAIVisionExtractor(api_key="k", client=client)
+    with pytest.raises(ExtractionFailed):
+        extractor.extract(b"not actually a pdf", "application/pdf")
 
 
 def test_get_vision_extractor_closes_its_client_after_the_request():

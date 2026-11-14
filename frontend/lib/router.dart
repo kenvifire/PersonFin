@@ -12,6 +12,7 @@ import 'screens/home_shell.dart';
 import 'screens/insights_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/upload_review_screen.dart';
+import 'services/document_picker_service.dart';
 import 'services/image_picker_service.dart';
 
 /// Builds the app's [GoRouter], gating every route except `/login` behind
@@ -23,11 +24,13 @@ import 'services/image_picker_service.dart';
 /// triggers on any 401 — causes the router to re-run `redirect` and send an
 /// unauthenticated user back to `/login`.
 ///
-/// [imagePickerService] overrides the dashboard's camera-FAB picker; only
-/// tests pass it (the real picker needs a browser).
+/// [imagePickerService]/[documentPickerService] override the dashboard's
+/// camera-FAB/import-statement pickers; only tests pass them (the real
+/// pickers need a browser).
 GoRouter buildRouter(
   AuthService authService, {
   ImagePickerService? imagePickerService,
+  DocumentPickerService? documentPickerService,
 }) =>
     GoRouter(
       refreshListenable: authService,
@@ -52,7 +55,10 @@ GoRouter buildRouter(
           routes: [
             GoRoute(
               path: '/dashboard',
-              builder: (c, s) => DashboardScreen(imagePickerService: imagePickerService),
+              builder: (c, s) => DashboardScreen(
+                imagePickerService: imagePickerService,
+                documentPickerService: documentPickerService,
+              ),
             ),
             GoRoute(
               path: '/insights',

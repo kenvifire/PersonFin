@@ -1,4 +1,5 @@
-"""Vision-based extraction of account/holdings data from a screenshot.
+"""Extraction of account/holdings data from an uploaded screenshot or PDF
+statement.
 
 Mirrors `services.fx` exactly: one exception type for every failure mode
 (`ExtractionFailed`), a `VisionExtractor` protocol, a real HTTP-based
@@ -6,14 +7,22 @@ implementation (`OpenAIVisionExtractor`) that wraps every possible
 failure into that one exception, and a `get_vision_extractor()` FastAPI
 dependency that yields the extractor and closes its `httpx.Client` in
 `finally`.
+
+A PDF statement (`PDF_MIME_TYPE`) never goes through OpenAI's vision
+path: its text is extracted locally first (`_pdf_to_text`, via `pypdf`)
+and sent as a single text message instead of an image, since the text
+a statement PDF embeds is exact where an OCR/vision read of it would
+just be a lossier, more expensive way to get the same numbers.
 """
 
 import base64
+import io
 import json
 from collections.abc import Generator
 from typing import Protocol
 
 import httpx
+import pypdf
 from pydantic import ValidationError
 
 from app.config import get_settings
@@ -22,13 +31,14 @@ from app.schemas.extraction import ExtractionResult
 VISION_HTTP_TIMEOUT_SECONDS = 60.0
 OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_VISION_MODEL = "gpt-4o-mini"
+PDF_MIME_TYPE = "application/pdf"
 
 EXTRACTION_PROMPT = (
-    "You are extracting account holdings data from a screenshot of a "
-    "brokerage or bank account statement or portfolio page. The "
-    "screenshot may be in any language, and may list several holdings "
-    "under one account rather than just one. Respond with a single "
-    "JSON object and nothing else, matching this shape exactly:\n"
+    "You are extracting account holdings data from a screenshot or PDF "
+    "statement of a brokerage or bank account. It may be in any "
+    "language, and may list several holdings under one account rather "
+    "than just one. Respond with a single JSON object and nothing "
+    "else, matching this shape exactly:\n"
     "{"
     '"institution": string or null, '
     '"account_label": string or null, '
@@ -43,7 +53,7 @@ EXTRACTION_PROMPT = (
     '"country_guess": string or null'
     "}]"
     "}\n"
-    "If a field can't be determined from the image, use null rather than "
+    "If a field can't be determined from the statement, use null rather than "
     "guessing. These are review-and-correct suggestions for the user, not "
     "final data. That said, use context that's actually visible rather "
     "than defaulting to null whenever a holding-level value isn't printed "
@@ -63,7 +73,14 @@ EXTRACTION_PROMPT = (
     "(a market/exchange label, a country flag icon, or an exchange this "
     "ticker is obviously listed on) even if it's not printed on the "
     "holding's own row — but still null when there's truly no such "
-    "evidence, not from the ticker symbol alone."
+    "evidence, not from the ticker symbol alone.\n"
+    "- A statement covering a date range (common in PDF statements) "
+    "often lists the SAME holdings twice: once as of the start of the "
+    "period and again as of the end. Use only the end-of-period "
+    "holdings (e.g. a section labelled \"closing\", \"ending\", or "
+    "dated with the later date) as \"holdings\" — never the "
+    "opening/beginning ones, and never both. \"taken_at_guess\" is "
+    "that same end-of-period date, not the statement's start date."
 )
 
 
@@ -79,28 +96,43 @@ class VisionExtractor(Protocol):
     def extract(self, image_bytes: bytes, mime_type: str) -> ExtractionResult: ...
 
 
+def _pdf_to_text(pdf_bytes: bytes) -> str:
+    """Extracts and concatenates every page's text from a PDF. Raises
+    `ExtractionFailed` for anything that isn't a readable PDF, so a
+    corrupt or unsupported file degrades the same way a bad OpenAI
+    response does, rather than escaping as a bare 500."""
+    try:
+        reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+        return "\n\n".join(page.extract_text() for page in reader.pages)
+    except Exception as exc:  # pypdf raises several distinct error types
+        raise ExtractionFailed(f"Could not read the PDF: {exc}") from exc
+
+
 class OpenAIVisionExtractor:
-    """Calls OpenAI's vision-capable chat-completions model with the image
-    embedded as a base64 data URL, and parses its JSON response into an
-    `ExtractionResult`."""
+    """Calls OpenAI's chat-completions model and parses its JSON response
+    into an `ExtractionResult`. A screenshot is sent as an image embedded
+    in a base64 data URL; a PDF statement (`PDF_MIME_TYPE`) has its text
+    extracted locally first (see module docstring) and is sent as plain
+    text instead."""
 
     def __init__(self, api_key: str, client: httpx.Client):
         self._api_key = api_key
         self._client = client
 
     def extract(self, image_bytes: bytes, mime_type: str) -> ExtractionResult:
-        data_url = f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
+        if mime_type == PDF_MIME_TYPE:
+            statement_text = _pdf_to_text(image_bytes)
+            content = [{"type": "text", "text": f"{EXTRACTION_PROMPT}\n\nStatement text:\n{statement_text}"}]
+        else:
+            data_url = f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
+            content = [
+                {"type": "text", "text": EXTRACTION_PROMPT},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ]
+
         payload = {
             "model": OPENAI_VISION_MODEL,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": EXTRACTION_PROMPT},
-                        {"type": "image_url", "image_url": {"url": data_url}},
-                    ],
-                }
-            ],
+            "messages": [{"role": "user", "content": content}],
             "response_format": {"type": "json_object"},
         }
 

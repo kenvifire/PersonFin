@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../models/dashboard.dart';
 import '../providers/dashboard_provider.dart';
+import '../services/document_picker_service.dart';
 import '../services/image_picker_service.dart';
 import '../widgets/account_breakdown_list.dart';
 import '../widgets/currency_switcher.dart';
@@ -17,9 +18,14 @@ import '../widgets/trend_sparkline.dart';
 /// breakdown — all in the currently selected display currency.
 class DashboardScreen extends StatelessWidget {
   final ImagePickerService imagePickerService;
+  final DocumentPickerService documentPickerService;
 
-  DashboardScreen({super.key, ImagePickerService? imagePickerService})
-      : imagePickerService = imagePickerService ?? RealImagePickerService();
+  DashboardScreen({
+    super.key,
+    ImagePickerService? imagePickerService,
+    DocumentPickerService? documentPickerService,
+  })  : imagePickerService = imagePickerService ?? RealImagePickerService(),
+        documentPickerService = documentPickerService ?? RealDocumentPickerService();
 
   @override
   Widget build(BuildContext context) {
@@ -29,6 +35,11 @@ class DashboardScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Dashboard'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.upload_file),
+            tooltip: 'Import a PDF statement',
+            onPressed: () => _pickDocumentAndReview(context),
+          ),
           CurrencySwitcher(currency: provider.currency, onChanged: provider.setCurrency),
           const SignOutButton(),
           const SizedBox(width: 8),
@@ -49,6 +60,18 @@ class DashboardScreen extends StatelessWidget {
   Future<void> _pickAndReview(BuildContext context) async {
     final router = GoRouter.of(context);
     final picked = await imagePickerService.pickImage();
+    if (!context.mounted) return;
+    if (picked != null) {
+      router.push('/upload', extra: picked);
+    }
+  }
+
+  /// Same shape as [_pickAndReview], for a PDF statement instead of a
+  /// screenshot — the review screen and upload pipeline don't care which
+  /// one produced the bytes/filename/mimeType it's handed.
+  Future<void> _pickDocumentAndReview(BuildContext context) async {
+    final router = GoRouter.of(context);
+    final picked = await documentPickerService.pickDocument();
     if (!context.mounted) return;
     if (picked != null) {
       router.push('/upload', extra: picked);

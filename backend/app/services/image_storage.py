@@ -10,10 +10,15 @@ from pathlib import Path
 
 from app.config import get_settings
 
-ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
+ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "image/webp", "application/pdf"}
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
-_EXTENSIONS_BY_MIME_TYPE = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+_EXTENSIONS_BY_MIME_TYPE = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+    "application/pdf": "pdf",
+}
 
 
 class UnsupportedUploadError(Exception):

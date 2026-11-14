@@ -18,6 +18,7 @@ import 'providers/dashboard_provider.dart';
 import 'providers/insights_provider.dart';
 import 'providers/todos_provider.dart';
 import 'router.dart';
+import 'services/document_picker_service.dart' show DocumentPickerService;
 import 'services/image_picker_service.dart' show ImagePickerService;
 import 'theme.dart';
 
@@ -76,8 +77,11 @@ class MyApp extends StatefulWidget {
   final UploadsApiBase uploadsApi;
   final AccountsApiBase accountsApi;
 
-  /// Overrides the `/upload` screen's image picker; tests only.
+  /// Overrides the dashboard's camera-FAB image picker; tests only.
   final ImagePickerService? imagePickerService;
+
+  /// Overrides the dashboard's import-statement document picker; tests only.
+  final DocumentPickerService? documentPickerService;
 
   const MyApp({
     super.key,
@@ -90,6 +94,7 @@ class MyApp extends StatefulWidget {
     required this.uploadsApi,
     required this.accountsApi,
     this.imagePickerService,
+    this.documentPickerService,
   });
 
   @override
@@ -130,6 +135,7 @@ class _MyAppState extends State<MyApp> {
     _router = buildRouter(
       widget.authService,
       imagePickerService: widget.imagePickerService,
+      documentPickerService: widget.documentPickerService,
     );
 
     // Listen *before* the initial load: with an expired persisted token,

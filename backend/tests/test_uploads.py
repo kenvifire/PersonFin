@@ -15,6 +15,7 @@ from app.routers.uploads import claim_upload_for_confirmation
 from app.schemas.extraction import DraftHolding, ExtractionResult
 from app.services import image_storage, vision
 from conftest import FakeVisionExtractor
+from test_vision import _minimal_pdf
 
 
 def test_upload_rejects_unsupported_mime_type(client, auth_header_for):
@@ -130,6 +131,40 @@ def test_extract_failure_sets_status_failed_not_500(client, auth_header_for):
     body = response.json()
     assert body["status"] == "failed"
     assert body["extraction_error"]
+
+
+def test_upload_accepts_and_extracts_a_pdf_statement(client, auth_header_for, db_session):
+    headers = auth_header_for("a@example.com")
+    pdf_bytes = _minimal_pdf("Futu HK 69953.16 USD")
+    created = client.post(
+        "/uploads", files={"file": ("statement.pdf", pdf_bytes, "application/pdf")}, headers=headers
+    )
+    assert created.status_code == 201
+    upload_id = created.json()["id"]
+    upload = db_session.get(Upload, upload_id)
+    assert upload.mime_type == "application/pdf"
+
+    fake_result = ExtractionResult(
+        institution="Futu HK",
+        holdings=[
+            DraftHolding(
+                label="VOO",
+                asset_class_guess="equity",
+                quantity=10,
+                value=1000.0,
+                currency_guess="USD",
+                country_guess="US",
+            )
+        ],
+    )
+    app.dependency_overrides[vision.get_vision_extractor] = lambda: FakeVisionExtractor(result=fake_result)
+    response = client.post(f"/uploads/{upload_id}/extract", headers=headers)
+    del app.dependency_overrides[vision.get_vision_extractor]
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "extracted"
+    assert body["extracted_payload"]["institution"] == "Futu HK"
 
 
 def test_extract_for_other_users_upload_returns_404(client, auth_header_for):

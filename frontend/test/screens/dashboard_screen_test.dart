@@ -9,6 +9,7 @@ import 'package:personfin/models/dashboard.dart';
 import 'package:personfin/models/drift_flag.dart';
 import 'package:personfin/providers/dashboard_provider.dart';
 import 'package:personfin/screens/dashboard_screen.dart';
+import 'package:personfin/services/document_picker_service.dart';
 import 'package:personfin/services/image_picker_service.dart';
 import 'package:personfin/widgets/drift_alert_banner.dart';
 import 'package:personfin/widgets/net_worth_hero.dart';
@@ -18,19 +19,24 @@ import '../fakes.dart';
 
 /// Wraps [DashboardScreen] in the provider it reads and a minimal GoRouter
 /// so taps that call `context.go`/`context.push` (the drift banner, the
-/// FAB) resolve against real routes instead of crashing with "no
-/// GoRouter found". The `/upload` placeholder renders whatever `extra` the
-/// FAB passed it, so tests can assert the exact picked image was forwarded.
+/// FAB, the import-statement button) resolve against real routes instead
+/// of crashing with "no GoRouter found". The `/upload` placeholder renders
+/// whatever `extra` was passed, so tests can assert the exact picked
+/// file was forwarded.
 ({Widget widget, GoRouter router}) buildSubject(
   DashboardProvider provider, {
   ImagePickerService? imagePickerService,
+  DocumentPickerService? documentPickerService,
 }) {
   final router = GoRouter(
     initialLocation: '/dashboard',
     routes: [
       GoRoute(
         path: '/dashboard',
-        builder: (c, s) => DashboardScreen(imagePickerService: imagePickerService),
+        builder: (c, s) => DashboardScreen(
+          imagePickerService: imagePickerService,
+          documentPickerService: documentPickerService,
+        ),
       ),
       GoRoute(
         path: '/insights',
@@ -279,6 +285,45 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(imagePickerService.callCount, 1);
+      expect(currentLocation(subject.router), '/dashboard');
+    });
+
+    testWidgets('tapping import-statement picks a PDF and navigates to /upload with it',
+        (tester) async {
+      final dashboardApi = FakeDashboardApi();
+      final targetsApi = FakeTargetsApi();
+      final provider = DashboardProvider(dashboardApi: dashboardApi, targetsApi: targetsApi);
+      await provider.load();
+      final documentPickerService = FakeDocumentPickerService(
+        result: (bytes: [1, 2, 3], filename: 'statement.pdf', mimeType: 'application/pdf'),
+      );
+
+      final subject = buildSubject(provider, documentPickerService: documentPickerService);
+      await tester.pumpWidget(subject.widget);
+
+      await tester.tap(find.byIcon(Icons.upload_file));
+      await tester.pumpAndSettle();
+
+      expect(documentPickerService.callCount, 1);
+      expect(find.text('Upload Screen: statement.pdf'), findsOneWidget);
+    });
+
+    testWidgets(
+        'tapping import-statement when the picker returns null (the user cancelled) stays on '
+        '/dashboard', (tester) async {
+      final dashboardApi = FakeDashboardApi();
+      final targetsApi = FakeTargetsApi();
+      final provider = DashboardProvider(dashboardApi: dashboardApi, targetsApi: targetsApi);
+      await provider.load();
+      final documentPickerService = FakeDocumentPickerService(result: null);
+
+      final subject = buildSubject(provider, documentPickerService: documentPickerService);
+      await tester.pumpWidget(subject.widget);
+
+      await tester.tap(find.byIcon(Icons.upload_file));
+      await tester.pumpAndSettle();
+
+      expect(documentPickerService.callCount, 1);
       expect(currentLocation(subject.router), '/dashboard');
     });
   });

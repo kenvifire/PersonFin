@@ -1,6 +1,7 @@
 // Shared hand-written fakes for `DashboardApiBase`/`TargetsApiBase`/
-// `InsightsApiBase`/`TodosApiBase`/`GoogleAuthService`/`ImagePickerService`,
-// used by the provider tests and the screen tests across tasks.
+// `InsightsApiBase`/`TodosApiBase`/`GoogleAuthService`/`ImagePickerService`/
+// `DocumentPickerService`, used by the provider tests and the screen tests
+// across tasks.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -14,6 +15,7 @@ import 'package:personfin/models/dashboard.dart';
 import 'package:personfin/models/drift_flag.dart';
 import 'package:personfin/models/insights.dart';
 import 'package:personfin/models/todo.dart';
+import 'package:personfin/services/document_picker_service.dart';
 import 'package:personfin/services/image_picker_service.dart';
 
 /// Hand-written fake for [ImagePickerService]. Returns [result] (`null`
@@ -27,6 +29,21 @@ class FakeImagePickerService implements ImagePickerService {
 
   @override
   Future<({List<int> bytes, String filename, String mimeType})?> pickImage() async {
+    callCount++;
+    return result;
+  }
+}
+
+/// Hand-written fake for [DocumentPickerService]. Same shape as
+/// [FakeImagePickerService].
+class FakeDocumentPickerService implements DocumentPickerService {
+  final ({List<int> bytes, String filename, String mimeType})? result;
+  int callCount = 0;
+
+  FakeDocumentPickerService({this.result});
+
+  @override
+  Future<({List<int> bytes, String filename, String mimeType})?> pickDocument() async {
     callCount++;
     return result;
   }
