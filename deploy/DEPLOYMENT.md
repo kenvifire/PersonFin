@@ -164,10 +164,11 @@ following the same Certbot pattern this VPS's other sites already use
    ```bash
    certbot --nginx -d finance.itluobo.com
    ```
-4. **Add PersonFin's two `location` blocks.** Open
-   `/etc/nginx/sites-available/finance-itluobo` and copy the
-   `location /api/` and `location /` blocks from this repo's
-   `deploy/nginx-finance.itluobo.com.conf` into the `server { }` block
+4. **Add PersonFin's `location` blocks.** Open
+   `/etc/nginx/sites-available/finance-itluobo` and copy every `location`
+   block from this repo's `deploy/nginx-finance.itluobo.com.conf` (the
+   `/api/` proxy, the `/` SPA fallback, and the no-cache headers for the
+   Flutter PWA's own versioning files) into the `server { }` block
    Certbot just added the `listen 443 ssl` directives to (the plain `:80`
    block Certbot leaves in place is just the redirect — leave it alone).
 5. Validate and reload:
