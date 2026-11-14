@@ -508,5 +508,145 @@ void main() {
 
       expect(provider.state, UploadFlowState.picking);
     });
+
+    // --- Many-holdings screenshots (e.g. a multi-position brokerage page) ---
+
+    /// A record with [count] holdings, all complete except for one labeled
+    /// `'Incomplete'` (missing its asset class), so tests can assert on
+    /// collapsed-vs-expanded behavior without constructing each field.
+    UploadRecord manyHoldingsRecord(int count) => UploadRecord(
+          id: 1,
+          status: 'extracted',
+          extractedPayload: ExtractionResult(
+            institution: 'Futu HK',
+            accountLabel: 'US Stocks',
+            accountTypeGuess: 'brokerage',
+            takenAtGuess: DateTime(2026, 11, 1),
+            holdings: [
+              for (var i = 0; i < count - 1; i++)
+                DraftHolding(
+                  label: 'HOLD$i',
+                  assetClassGuess: 'equity',
+                  quantity: 10,
+                  value: 100.0,
+                  currencyGuess: 'USD',
+                  countryGuess: 'US',
+                ),
+              DraftHolding(
+                label: 'Incomplete',
+                assetClassGuess: null,
+                quantity: 5,
+                value: 50.0,
+                currencyGuess: 'USD',
+                countryGuess: 'US',
+              ),
+            ],
+          ),
+          extractionError: null,
+          suggestedAccountId: null,
+        );
+
+    testWidgets(
+        'with more than 3 holdings, complete ones start collapsed to a summary and the '
+        'incomplete one starts expanded', (tester) async {
+      final uploadsApi = FakeUploadsApi(extractResult: manyHoldingsRecord(4));
+      final provider = UploadFlowProvider(uploadsApi: uploadsApi, accountsApi: FakeAccountsApi());
+      await provider.startUpload(bytes: [1], filename: 'shot.png', mimeType: 'image/png');
+
+      final subject = buildSubject(uploadProvider: provider);
+      await growSurface(tester);
+      await tester.pumpWidget(subject.widget);
+      subject.router.push('/upload');
+      await tester.pumpAndSettle();
+
+      // Complete holdings: label shown once (collapsed summary), no editable
+      // Label field for them.
+      expect(find.text('HOLD0'), findsOneWidget);
+      expect(find.text('HOLD1'), findsOneWidget);
+      expect(find.text('HOLD2'), findsOneWidget);
+      // The incomplete one starts expanded: its Label field carries the
+      // text, so it's the only one with a matching TextFormField.
+      expect(find.widgetWithText(TextFormField, 'Incomplete'), findsOneWidget);
+      expect(find.widgetWithText(TextFormField, 'HOLD0'), findsNothing);
+    });
+
+    testWidgets('with 3 or fewer holdings, every row starts expanded regardless of completeness',
+        (tester) async {
+      final uploadsApi = FakeUploadsApi(extractResult: manyHoldingsRecord(3));
+      final provider = UploadFlowProvider(uploadsApi: uploadsApi, accountsApi: FakeAccountsApi());
+      await provider.startUpload(bytes: [1], filename: 'shot.png', mimeType: 'image/png');
+
+      final subject = buildSubject(uploadProvider: provider);
+      await growSurface(tester);
+      await tester.pumpWidget(subject.widget);
+      subject.router.push('/upload');
+      await tester.pumpAndSettle();
+
+      expect(find.widgetWithText(TextFormField, 'HOLD0'), findsOneWidget);
+      expect(find.widgetWithText(TextFormField, 'HOLD1'), findsOneWidget);
+      expect(find.widgetWithText(TextFormField, 'Incomplete'), findsOneWidget);
+    });
+
+    testWidgets('tapping a collapsed holding expands it, and tapping again collapses it back',
+        (tester) async {
+      final uploadsApi = FakeUploadsApi(extractResult: manyHoldingsRecord(4));
+      final provider = UploadFlowProvider(uploadsApi: uploadsApi, accountsApi: FakeAccountsApi());
+      await provider.startUpload(bytes: [1], filename: 'shot.png', mimeType: 'image/png');
+
+      final subject = buildSubject(uploadProvider: provider);
+      await growSurface(tester);
+      await tester.pumpWidget(subject.widget);
+      subject.router.push('/upload');
+      await tester.pumpAndSettle();
+
+      expect(find.widgetWithText(TextFormField, 'HOLD0'), findsNothing);
+
+      await tester.tap(find.text('HOLD0'));
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(TextFormField, 'HOLD0'), findsOneWidget);
+
+      // Tapping its header row again (now showing only the toggle icon,
+      // found via the chevron) collapses it back.
+      await tester.tap(find.byIcon(Icons.expand_less).first);
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(TextFormField, 'HOLD0'), findsNothing);
+    });
+
+    testWidgets(
+        "the '+ New account' fields are pre-filled from the extraction's institution/account "
+        'label/account type guesses', (tester) async {
+      final uploadsApi = FakeUploadsApi(extractResult: manyHoldingsRecord(4));
+      final provider = UploadFlowProvider(uploadsApi: uploadsApi, accountsApi: FakeAccountsApi());
+      await provider.startUpload(bytes: [1], filename: 'shot.png', mimeType: 'image/png');
+      await provider.loadAccounts();
+
+      final subject = buildSubject(uploadProvider: provider);
+      await growSurface(tester);
+      await tester.pumpWidget(subject.widget);
+      subject.router.push('/upload');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('+ New account'));
+      await tester.pumpAndSettle();
+
+      expect(find.widgetWithText(TextFormField, 'US Stocks'), findsOneWidget);
+      expect(find.widgetWithText(TextFormField, 'Futu HK'), findsOneWidget);
+      expect(find.widgetWithText(TextFormField, 'brokerage'), findsOneWidget);
+    });
+
+    testWidgets('shows the institution and account label as context under "Holdings"',
+        (tester) async {
+      final uploadsApi = FakeUploadsApi(extractResult: manyHoldingsRecord(4));
+      final provider = UploadFlowProvider(uploadsApi: uploadsApi, accountsApi: FakeAccountsApi());
+      await provider.startUpload(bytes: [1], filename: 'shot.png', mimeType: 'image/png');
+
+      final subject = buildSubject(uploadProvider: provider);
+      await growSurface(tester);
+      await tester.pumpWidget(subject.widget);
+      subject.router.push('/upload');
+      await tester.pumpAndSettle();
+
+      expect(find.text('Futu HK · US Stocks'), findsOneWidget);
+    });
   });
 }

@@ -48,6 +48,7 @@ class UploadFlowProvider extends ChangeNotifier {
   List<EditableHolding> holdings = [];
   String institution = '';
   String accountLabel = '';
+  String accountTypeGuess = '';
   DateTime takenAt = DateTime.now();
   int? suggestedAccountId;
   List<AccountSummaryLite> accounts = [];
@@ -102,6 +103,7 @@ class UploadFlowProvider extends ChangeNotifier {
         holdings = payload.holdings.map(EditableHolding.fromDraft).toList();
         institution = payload.institution ?? '';
         accountLabel = payload.accountLabel ?? '';
+        accountTypeGuess = payload.accountTypeGuess ?? '';
         if (payload.takenAtGuess != null) {
           takenAt = payload.takenAtGuess!;
         }

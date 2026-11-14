@@ -25,9 +25,10 @@ OPENAI_VISION_MODEL = "gpt-4o-mini"
 
 EXTRACTION_PROMPT = (
     "You are extracting account holdings data from a screenshot of a "
-    "brokerage or bank account statement or portfolio page. Respond "
-    "with a single JSON object and nothing else, matching this shape "
-    "exactly:\n"
+    "brokerage or bank account statement or portfolio page. The "
+    "screenshot may be in any language, and may list several holdings "
+    "under one account rather than just one. Respond with a single "
+    "JSON object and nothing else, matching this shape exactly:\n"
     "{"
     '"institution": string or null, '
     '"account_label": string or null, '
@@ -44,7 +45,25 @@ EXTRACTION_PROMPT = (
     "}\n"
     "If a field can't be determined from the image, use null rather than "
     "guessing. These are review-and-correct suggestions for the user, not "
-    "final data."
+    "final data. That said, use context that's actually visible rather "
+    "than defaulting to null whenever a holding-level value isn't printed "
+    "right next to the holding itself:\n"
+    "- \"institution\": the broker/bank/platform name, usually visible in "
+    "the app's header, logo, or an account-switcher label (e.g. "
+    "\"FUTU HK\", \"Charles Schwab\") — not the account_label.\n"
+    "- \"account_type_guess\": a short free-text guess like \"brokerage\", "
+    "\"bank\", or \"retirement\", from context like the app's own labels "
+    "(e.g. a stock-trading UI implies \"brokerage\").\n"
+    "- \"currency_guess\" per holding: if the page shows one account-level "
+    "currency (e.g. a total market value like \"69,953.16 USD\", or a "
+    "market section labelled by currency), use that for every holding "
+    "that doesn't show its own different currency — don't leave it null "
+    "just because the currency isn't repeated next to each holding.\n"
+    "- \"country_guess\" per holding: infer from clear visible context "
+    "(a market/exchange label, a country flag icon, or an exchange this "
+    "ticker is obviously listed on) even if it's not printed on the "
+    "holding's own row — but still null when there's truly no such "
+    "evidence, not from the ticker symbol alone."
 )
 
 
