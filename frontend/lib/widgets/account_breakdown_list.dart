@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../models/dashboard.dart';
@@ -49,6 +50,7 @@ class AccountBreakdownList extends StatelessWidget {
               account.asOf == null ? 'no data yet' : 'updated ${dateFormat.format(account.asOf!)}',
             ),
             trailing: Text(_formatMoney(account.value)),
+            onTap: () => context.push('/accounts/${account.accountId}'),
           ),
       ],
     );

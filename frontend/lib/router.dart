@@ -4,7 +4,9 @@ import 'package:provider/provider.dart';
 import 'api/accounts_api.dart';
 import 'api/uploads_api.dart';
 import 'auth/auth_service.dart';
+import 'providers/account_detail_provider.dart';
 import 'providers/upload_flow_provider.dart';
+import 'screens/account_detail_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/home_shell.dart';
 import 'screens/insights_screen.dart';
@@ -73,6 +75,16 @@ GoRouter buildRouter(
             child: UploadReviewScreen(
               picked: s.extra as ({List<int> bytes, String filename, String mimeType})?,
             ),
+          ),
+        ),
+        // A fresh AccountDetailProvider per visit, loaded for whichever
+        // account id is in the path — same per-visit pattern as /upload.
+        GoRoute(
+          path: '/accounts/:id',
+          builder: (c, s) => ChangeNotifierProvider<AccountDetailProvider>(
+            create: (ctx) => AccountDetailProvider(accountsApi: ctx.read<AccountsApiBase>())
+              ..load(int.parse(s.pathParameters['id']!)),
+            child: const AccountDetailScreen(),
           ),
         ),
       ],

@@ -5,6 +5,7 @@ import 'package:personfin/api/uploads_api.dart';
 import 'package:personfin/models/account.dart';
 import 'package:personfin/models/extraction.dart';
 import 'package:personfin/models/holding.dart';
+import 'package:personfin/models/snapshot.dart';
 import 'package:personfin/models/upload.dart';
 import 'package:personfin/providers/upload_flow_provider.dart';
 
@@ -79,6 +80,24 @@ class FakeAccountsApi implements AccountsApiBase {
 
   @override
   Future<List<AccountSummaryLite>> listAccounts() async => accounts;
+
+  @override
+  Future<AccountSummaryLite> getAccount(int id) => throw UnimplementedError();
+
+  @override
+  Future<void> updateAccount({
+    required int id,
+    String? name,
+    String? institution,
+    String? accountType,
+  }) =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> deleteAccount(int id) => throw UnimplementedError();
+
+  @override
+  Future<List<SnapshotOut>> listSnapshots(int accountId) => throw UnimplementedError();
 }
 
 UploadRecord extractedRecord({int id = 1}) => UploadRecord(

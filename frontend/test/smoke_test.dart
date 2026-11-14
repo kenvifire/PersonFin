@@ -16,6 +16,7 @@ import 'package:personfin/models/dashboard.dart';
 import 'package:personfin/models/drift_flag.dart';
 import 'package:personfin/models/holding.dart';
 import 'package:personfin/models/insights.dart';
+import 'package:personfin/models/snapshot.dart';
 import 'package:personfin/models/todo.dart';
 import 'package:personfin/models/upload.dart';
 import 'package:personfin/models/user.dart';
@@ -98,6 +99,24 @@ class FakeUploadsApi implements UploadsApiBase {
 class FakeAccountsApi implements AccountsApiBase {
   @override
   Future<List<AccountSummaryLite>> listAccounts() => throw UnimplementedError();
+
+  @override
+  Future<AccountSummaryLite> getAccount(int id) => throw UnimplementedError();
+
+  @override
+  Future<void> updateAccount({
+    required int id,
+    String? name,
+    String? institution,
+    String? accountType,
+  }) =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> deleteAccount(int id) => throw UnimplementedError();
+
+  @override
+  Future<List<SnapshotOut>> listSnapshots(int accountId) => throw UnimplementedError();
 }
 
 void main() {

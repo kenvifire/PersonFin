@@ -122,6 +122,51 @@ def test_create_snapshot_returns_503_when_fx_is_unavailable(client, auth_header_
     assert db_session.query(Snapshot).count() == 0  # nothing partially written
 
 
+def test_list_snapshots_returns_most_recent_first(client, auth_header_for):
+    headers = auth_header_for("history2@example.com")
+    account_id = _new_account(client, headers)
+    client.post(f"/accounts/{account_id}/snapshots", json={"taken_at": "2026-11-01", "holdings": [_holding()]}, headers=headers)
+    client.post(f"/accounts/{account_id}/snapshots", json={"taken_at": "2026-11-08", "holdings": [_holding()]}, headers=headers)
+
+    response = client.get(f"/accounts/{account_id}/snapshots", headers=headers)
+
+    assert response.status_code == 200
+    taken_ats = [snapshot["taken_at"] for snapshot in response.json()]
+    assert taken_ats == ["2026-11-08", "2026-11-01"]
+
+
+def test_list_snapshots_includes_holdings(client, auth_header_for):
+    headers = auth_header_for("history3@example.com")
+    account_id = _new_account(client, headers)
+    client.post(f"/accounts/{account_id}/snapshots", json={"taken_at": "2026-11-08", "holdings": [_holding()]}, headers=headers)
+
+    response = client.get(f"/accounts/{account_id}/snapshots", headers=headers)
+
+    assert response.status_code == 200
+    [snapshot] = response.json()
+    assert snapshot["holdings"][0]["label"] == "VFV"
+
+
+def test_list_snapshots_for_other_users_account_is_404(client, auth_header_for):
+    headers_a = auth_header_for("historya@example.com")
+    headers_b = auth_header_for("historyb@example.com")
+    account_id = _new_account(client, headers_a)
+
+    response = client.get(f"/accounts/{account_id}/snapshots", headers=headers_b)
+
+    assert response.status_code == 404
+
+
+def test_list_snapshots_for_account_with_none_is_an_empty_list(client, auth_header_for):
+    headers = auth_header_for("historyempty@example.com")
+    account_id = _new_account(client, headers)
+
+    response = client.get(f"/accounts/{account_id}/snapshots", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
 def test_create_snapshot_locks_one_rate_per_currency(client, auth_header_for, use_fx_provider):
     from conftest import FakeFXRateProvider
 

@@ -43,6 +43,10 @@ import '../fakes.dart';
           return Scaffold(body: Text('Upload Screen: ${extra?.filename}'));
         },
       ),
+      GoRoute(
+        path: '/accounts/:id',
+        builder: (c, s) => Scaffold(body: Text('Account Detail Screen: ${s.pathParameters['id']}')),
+      ),
     ],
   );
   final widget = ChangeNotifierProvider.value(
@@ -156,6 +160,30 @@ void main() {
       expect(find.textContaining('updated'), findsOneWidget);
       expect(find.textContaining('no data yet'), findsOneWidget);
       expect(find.byType(DriftAlertBanner), findsNothing);
+    });
+
+    testWidgets('tapping an account in the breakdown list navigates to its detail screen',
+        (tester) async {
+      final dashboardData = DashboardData(
+        netWorth: 1000.0,
+        currency: 'CAD',
+        byAssetClass: {},
+        byCountry: {},
+        accounts: [AccountSummary(accountId: 7, name: 'Checking', asOf: null, value: 1000.0)],
+        trend: [],
+      );
+      final dashboardApi = FakeDashboardApi(fixedData: dashboardData);
+      final targetsApi = FakeTargetsApi(fixedDrift: []);
+      final provider = DashboardProvider(dashboardApi: dashboardApi, targetsApi: targetsApi);
+      await provider.load();
+
+      final subject = buildSubject(provider);
+      await tester.pumpWidget(subject.widget);
+
+      await tester.tap(find.text('Checking'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Account Detail Screen: 7'), findsOneWidget);
     });
 
     testWidgets(

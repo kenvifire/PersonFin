@@ -30,3 +30,18 @@ def create_snapshot_endpoint(
 ) -> Snapshot:
     account = get_owned_account_or_404(account_id, current_user, db)
     return create_snapshot(db, account, payload, fx_provider)
+
+
+@router.get("", response_model=list[SnapshotOut])
+def list_snapshots_endpoint(
+    account_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[Snapshot]:
+    get_owned_account_or_404(account_id, current_user, db)
+    return (
+        db.query(Snapshot)
+        .filter(Snapshot.account_id == account_id)
+        .order_by(Snapshot.taken_at.desc())
+        .all()
+    )
