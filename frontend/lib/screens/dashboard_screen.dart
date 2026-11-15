@@ -35,20 +35,34 @@ class DashboardScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Dashboard'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.upload_file),
-            tooltip: 'Import a PDF statement',
-            onPressed: () => _pickDocumentAndReview(context),
-          ),
           CurrencySwitcher(currency: provider.currency, onChanged: provider.setCurrency),
           const SignOutButton(),
           const SizedBox(width: 8),
         ],
       ),
       body: _buildBody(context, provider),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _pickAndReview(context),
-        child: const Icon(Icons.camera_alt),
+      // Two separate, clearly labeled buttons rather than one icon doing
+      // double duty — a single small app-bar icon for "import a statement"
+      // turned out to not be noticed at all next to the much more
+      // prominent camera FAB.
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          FloatingActionButton.extended(
+            heroTag: 'import-statement-fab',
+            onPressed: () => _pickDocumentAndReview(context),
+            icon: const Icon(Icons.upload_file),
+            label: const Text('Statement'),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton.extended(
+            heroTag: 'add-screenshot-fab',
+            onPressed: () => _pickAndReview(context),
+            icon: const Icon(Icons.camera_alt),
+            label: const Text('Screenshot'),
+          ),
+        ],
       ),
     );
   }
@@ -108,7 +122,7 @@ class DashboardScreen extends StatelessWidget {
             child: Padding(
               padding: EdgeInsets.all(24),
               child: Text(
-                'No accounts yet — tap the camera button to add your first screenshot',
+                'No accounts yet — add your first screenshot or PDF statement below',
                 textAlign: TextAlign.center,
               ),
             ),

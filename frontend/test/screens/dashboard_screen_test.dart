@@ -122,7 +122,7 @@ void main() {
       await tester.pumpWidget(buildSubject(provider).widget);
 
       expect(
-        find.text('No accounts yet — tap the camera button to add your first screenshot'),
+        find.text('No accounts yet — add your first screenshot or PDF statement below'),
         findsOneWidget,
       );
       expect(find.byType(NetWorthHero), findsNothing);
