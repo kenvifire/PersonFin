@@ -145,6 +145,9 @@ void main() {
 
       expect(find.text('Big Bank · brokerage'), findsOneWidget);
       expect(find.text('VFV'), findsOneWidget);
+      // Quantity shows alongside asset class/country, not just the value.
+      expect(find.text('equity · CA · 10 units'), findsOneWidget);
+      expect(find.text('CAD1,000'), findsOneWidget);
       // The older snapshot's holding is inside a collapsed ExpansionTile.
       expect(find.text('OLD'), findsNothing);
       expect(find.textContaining('Nov 8, 2026'), findsOneWidget);

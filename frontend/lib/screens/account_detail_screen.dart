@@ -126,13 +126,26 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
   }
 
   Widget _buildHoldingTile(HoldingOut holding) {
+    final subtitleParts = <String>[
+      holding.assetClass,
+      holding.country,
+      if (holding.quantity != null) '${_formatQuantity(holding.quantity!)} units',
+    ];
     return ListTile(
       contentPadding: EdgeInsets.zero,
       title: Text(holding.label),
-      subtitle: Text('${holding.assetClass} · ${holding.country}'),
-      trailing: Text(_formatMoney(holding.value, holding.currency)),
+      subtitle: Text(subtitleParts.join(' · ')),
+      trailing: Text(
+        _formatMoney(holding.value, holding.currency),
+        style: const TextStyle(fontWeight: FontWeight.w600),
+      ),
     );
   }
+
+  /// Whole numbers print without a trailing ".0" (e.g. "300" not "300.0");
+  /// fractional quantities (common for ETF units) keep their precision.
+  String _formatQuantity(double quantity) =>
+      quantity == quantity.roundToDouble() ? quantity.toStringAsFixed(0) : quantity.toString();
 
   Widget _buildHistoryTile(SnapshotOut snapshot) {
     final totalUsd = snapshot.holdings.fold<double>(0, (sum, h) => sum + h.valueUsd);
